@@ -9,8 +9,8 @@
 Summary:        Rust Programming Language
 Name:           rust
 Version:        1.59.0
-Release:        1%{?dist}
-License:        ASL 2.0 AND MIT
+Release:        2%{?dist}
+License:        ASL 2.0 or MIT
 Vendor:         Microsoft Corporation
 Distribution:   Mariner
 Group:          Applications/System
@@ -26,7 +26,6 @@ Source4:        https://static.rust-lang.org/dist/%{release_date}/rust-std-%{sta
 Source5:        https://static.rust-lang.org/dist/%{release_date}/cargo-%{stage0_version}-aarch64-unknown-linux-gnu.tar.gz
 Source6:        https://static.rust-lang.org/dist/%{release_date}/rustc-%{stage0_version}-aarch64-unknown-linux-gnu.tar.gz
 Source7:        https://static.rust-lang.org/dist/%{release_date}/rust-std-%{stage0_version}-aarch64-unknown-linux-gnu.tar.gz
-
 BuildRequires:  binutils
 BuildRequires:  cmake
 BuildRequires:  curl-devel
@@ -34,11 +33,9 @@ BuildRequires:  git
 BuildRequires:  glibc
 BuildRequires:  ninja-build
 BuildRequires:  python3
-
-%if %{with_check}
-BuildRequires:  python3-xml
-%endif
-
+# rustc uses a C compiler to invoke the linker
+Requires:       gcc
+Requires:       binutils
 Provides:       cargo = %{version}-%{release}
 
 %description
@@ -76,7 +73,13 @@ mv %{SOURCE7} "$BUILD_CACHE_DIR"
 export CFLAGS="`echo " %{build_cflags} " | sed 's/ -g//'`"
 export CXXFLAGS="`echo " %{build_cxxflags} " | sed 's/ -g//'`"
 
-sh ./configure --prefix=%{_prefix} --enable-extended --tools="cargo,rustfmt"
+sh ./configure \
+    --prefix=%{_prefix} \
+    --enable-extended \
+    --tools="cargo,rustfmt" \
+    --release-channel="stable" \
+    --release-description="CBL-Mariner %{version}-%{release}"
+
 # SUDO_USER=root bypasses a check in the python bootstrap that
 # makes rust refuse to pull sources from the internet
 USER=root SUDO_USER=root %make_build
@@ -93,7 +96,7 @@ rm %{buildroot}%{_docdir}/%{name}/*.old
 %ldconfig_scriptlets
 
 %files
-%license LICENSE-MIT
+%license LICENSE-MIT LICENSE-APACHE COPYRIGHT
 %doc CONTRIBUTING.md README.md RELEASES.md
 %{_bindir}/rustc
 %{_bindir}/rustdoc
@@ -120,6 +123,13 @@ rm %{buildroot}%{_docdir}/%{name}/*.old
 %{_sysconfdir}/bash_completion.d/cargo
 
 %changelog
+* Wed Jul 06 2022 Olivia Crain <oliviacrain@microsoft.com> - 1.59.0-2
+- Breaking change: Configure as a stable release, which disables unstable features
+- Add runtime requirements on gcc and binutils
+- Package ASL 2.0 license, additional copyright information
+- Fix licensing info- dual-licensed, not multiply-licensed
+- License verified
+
 * Mon Mar 07 2022 Pawel Winogrodzki <pawelwi@microsoft.com> - 1.59.0-1
 - Updating to version 1.59.0 to fix CVE-2022-21658.
 - Updating build instructions to fix tests.
