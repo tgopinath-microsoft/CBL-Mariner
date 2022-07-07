@@ -33,9 +33,10 @@ BuildRequires:  git
 BuildRequires:  glibc
 BuildRequires:  ninja-build
 BuildRequires:  python3
-# rustc uses a C compiler to invoke the linker
-Requires:       gcc
+# rustc uses a C compiler to invoke the linker, and links to glibc in most cases
 Requires:       binutils
+Requires:       gcc
+Requires:       glibc-devel
 Provides:       cargo = %{version}-%{release}
 
 %description
@@ -125,7 +126,7 @@ rm %{buildroot}%{_docdir}/%{name}/*.old
 %changelog
 * Wed Jul 06 2022 Olivia Crain <oliviacrain@microsoft.com> - 1.59.0-2
 - Breaking change: Configure as a stable release, which disables unstable features
-- Add runtime requirements on gcc and binutils
+- Add runtime requirements on gcc, binutils, glibc-devel
 - Package ASL 2.0 license, additional copyright information
 - Fix licensing info- dual-licensed, not multiply-licensed
 - License verified
