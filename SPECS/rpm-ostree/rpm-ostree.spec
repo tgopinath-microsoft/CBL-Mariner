@@ -1,7 +1,7 @@
 Summary:        Commit RPMs to an OSTree repository
 Name:           rpm-ostree
 Version:        2022.1
-Release:        1%{?dist}
+Release:        2%{?dist}
 License:        LGPLv2+
 Vendor:         Microsoft Corporation
 Distribution:   Mariner
@@ -153,6 +153,9 @@ make check
 %{_datadir}/gir-1.0/*-1.0.gir
 
 %changelog
+* Thu Jul 07 2022 Olivia Crain <oliviacrain@microsoft.com> - 2022.1-2
+- Bump package to rebuild with stable Rust compiler
+
 * Thu Jan 27 2022 Henry Li <lihl@microsoft.com> - 2022.1-1
 - Upgrade to version 2022.1
 - Remove patches that no longer apply
