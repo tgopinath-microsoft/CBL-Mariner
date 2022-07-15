@@ -1006,6 +1006,16 @@
       "component": {
         "type": "other",
         "other": {
+          "name": "bluefield_edac",
+          "version": "1.0",
+          "downloadUrl": ""
+        }
+      }
+    },
+    {
+      "component": {
+        "type": "other",
+        "other": {
           "name": "bluez",
           "version": "5.63",
           "downloadUrl": "http://www.kernel.org/pub/linux/bluetooth/bluez-5.63.tar.xz"
