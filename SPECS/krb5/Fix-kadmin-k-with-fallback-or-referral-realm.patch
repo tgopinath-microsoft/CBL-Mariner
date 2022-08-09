@@ -1,0 +1,64 @@
+From 2d2bb9a14613b3283dabdd40c3ee28e5b680cf93 Mon Sep 17 00:00:00 2001
+From: Greg Hudson <ghudson@mit.edu>
+Date: Mon, 7 Jun 2021 15:00:41 -0400
+Subject: [PATCH] Fix kadmin -k with fallback or referral realm
+
+kadmin -k produces a client principal name with
+krb5_sname_to_principal(), but it gets converted to a string and back
+due to the signature of kadm5_init_with_skey(), which loses track of
+the name type, so no canonicalization is performed.
+
+In libkadm5clnt initialization, recognize the important subset of this
+case--an empty realm indicates either fallback processing or the
+referral realm--and restore the host-based name type so that the
+client principal can be canonicalized against the keytab.
+
+ticket: 9013 (new)
+(cherry picked from commit dcb79089276624d7ddf44e08d35bd6d7d7e557d2)
+---
+ src/lib/kadm5/clnt/client_init.c |  7 +++++++
+ src/tests/t_kadmin.py            | 12 ++++++++++++
+ 2 files changed, 19 insertions(+)
+
+diff --git a/src/lib/kadm5/clnt/client_init.c b/src/lib/kadm5/clnt/client_init.c
+index aa1223bb3..0aaca701f 100644
+--- a/src/lib/kadm5/clnt/client_init.c
++++ b/src/lib/kadm5/clnt/client_init.c
+@@ -221,9 +221,16 @@ init_any(krb5_context context, char *client_name, enum init_type init_type,
+         return KADM5_MISSING_KRB5_CONF_PARAMS;
+     }
+ 
++    /*
++     * Parse the client name.  If it has an empty realm, it is almost certainly
++     * a host-based principal using DNS fallback processing or the referral
++     * realm, so give it the appropriate name type for canonicalization.
++     */
+     code = krb5_parse_name(handle->context, client_name, &client);
+     if (code)
+         goto error;
++    if (init_type == INIT_SKEY && client->realm.length == 0)
++        client->type = KRB5_NT_SRV_HST;
+ 
+     /*
+      * Get credentials.  Also does some fallbacks in case kadmin/fqdn
+diff --git a/src/tests/t_kadmin.py b/src/tests/t_kadmin.py
+index fe6a3cc2e..98453d92e 100644
+--- a/src/tests/t_kadmin.py
++++ b/src/tests/t_kadmin.py
+@@ -51,4 +51,16 @@ for i in range(200):
+     realm.run_kadmin(['addprinc', '-randkey', 'foo%d' % i])
+ realm.run_kadmin(['listprincs'], expected_msg='foo199')
+ 
++# Test kadmin -k with the default principal, with and without
++# fallback.  This operation requires canonicalization against the
++# keytab in krb5_get_init_creds_keytab() as the
++# krb5_sname_to_principal() result won't have a realm.  Try with and
++# without without fallback processing since the code paths are
++# different.
++mark('kadmin -k')
++realm.run([kadmin, '-k', 'getprinc', realm.host_princ])
++no_canon_conf = {'libdefaults': {'dns_canonicalize_hostname': 'false'}}
++no_canon = realm.special_env('no_canon', False, krb5_conf=no_canon_conf)
++realm.run([kadmin, '-k', 'getprinc', realm.host_princ], env=no_canon)
++
+ success('kadmin and kpasswd tests')

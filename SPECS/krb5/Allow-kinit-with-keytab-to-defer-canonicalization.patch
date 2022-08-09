@@ -1,0 +1,60 @@
+From fb4d9fa851b1d0d3375556d1cdc1fce72176df1e Mon Sep 17 00:00:00 2001
+From: Robbie Harwood <rharwood@redhat.com>
+Date: Thu, 3 Jun 2021 16:03:07 -0400
+Subject: [PATCH] Allow kinit with keytab to defer canonicalization
+
+[ghudson@mit.edu: added tests]
+
+ticket: 9012 (new)
+(cherry picked from commit 5e6a6efc5df689d9fb8730d0227167ffbb6ece0e)
+---
+ src/clients/kinit/kinit.c | 11 -----------
+ src/tests/t_keytab.py     | 13 +++++++++++++
+ 2 files changed, 13 insertions(+), 11 deletions(-)
+
+diff --git a/src/clients/kinit/kinit.c b/src/clients/kinit/kinit.c
+index d1f5d74c3..5a6d7237c 100644
+--- a/src/clients/kinit/kinit.c
++++ b/src/clients/kinit/kinit.c
+@@ -510,17 +510,6 @@ k5_begin(struct k_opts *opts, struct k5_data *k5)
+                     _("when creating default server principal name"));
+             goto cleanup;
+         }
+-        if (k5->me->realm.data[0] == 0) {
+-            ret = krb5_unparse_name(k5->ctx, k5->me, &k5->name);
+-            if (ret == 0) {
+-                com_err(progname, KRB5_ERR_HOST_REALM_UNKNOWN,
+-                        _("(principal %s)"), k5->name);
+-            } else {
+-                com_err(progname, KRB5_ERR_HOST_REALM_UNKNOWN,
+-                        _("for local services"));
+-            }
+-            goto cleanup;
+-        }
+     } else if (k5->out_cc != NULL) {
+         /* If the output ccache is initialized, use its principal. */
+         if (krb5_cc_get_principal(k5->ctx, k5->out_cc, &princ) == 0)
+diff --git a/src/tests/t_keytab.py b/src/tests/t_keytab.py
+index 850375c92..a9adebb26 100755
+--- a/src/tests/t_keytab.py
++++ b/src/tests/t_keytab.py
+@@ -41,6 +41,19 @@ realm.kinit(realm.user_princ, flags=['-i'],
+             expected_msg='keytab specified, forcing -k')
+ realm.klist(realm.user_princ)
+ 
++# Test default principal for -k.  This operation requires
++# canonicalization against the keytab in krb5_get_init_creds_keytab()
++# as the krb5_sname_to_principal() result won't have a realm.  Try
++# with and without without fallback processing since the code paths
++# are different.
++mark('default principal for -k')
++realm.run([kinit, '-k'])
++realm.klist(realm.host_princ)
++no_canon_conf = {'libdefaults': {'dns_canonicalize_hostname': 'false'}}
++no_canon = realm.special_env('no_canon', False, krb5_conf=no_canon_conf)
++realm.run([kinit, '-k'], env=no_canon)
++realm.klist(realm.host_princ)
++
+ # Test extracting keys with multiple key versions present.
+ mark('multi-kvno extract')
+ os.remove(realm.keytab)

@@ -1,0 +1,25 @@
+From 2f039fc910022c9569fe6941a194f0b26bd6c894 Mon Sep 17 00:00:00 2001
+From: Robbie Harwood <rharwood@redhat.com>
+Date: Fri, 20 Sep 2019 16:11:29 -0400
+Subject: [PATCH] Add buildsystem detection of the OpenSSL-3 KDF interface
+
+(cherry picked from commit a3e03dfd40928c4615bd9b8546eac0c104377850)
+---
+ src/configure.ac | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/src/configure.ac b/src/configure.ac
+index eb6307468..9c2e816fe 100644
+--- a/src/configure.ac
++++ b/src/configure.ac
+@@ -282,6 +282,10 @@ AC_SUBST(CRYPTO_IMPL)
+ AC_SUBST(CRYPTO_IMPL_CFLAGS)
+ AC_SUBST(CRYPTO_IMPL_LIBS)
+ 
++if test "$CRYPTO_IMPL" = openssl; then
++   AC_CHECK_FUNCS(EVP_KDF_fetch)
++fi
++
+ AC_ARG_WITH([prng-alg],
+ AC_HELP_STRING([--with-prng-alg=ALG], [use specified PRNG algorithm. @<:@fortuna@:>@]),
+ [PRNG_ALG=$withval

@@ -1,0 +1,35 @@
+From 95547c12b39e62df55cef05cae890302834b7f98 Mon Sep 17 00:00:00 2001
+From: Greg Hudson <ghudson@mit.edu>
+Date: Wed, 23 Jun 2021 16:57:39 -0400
+Subject: [PATCH] Clean up context after failed open in libkdb5
+
+If krb5_db_open() or krb5_db_create() fails, release the dal_handle,
+as the caller is unlikely to call krb5_db_close() after a failure.
+
+(cherry picked from commit 849b7056e703bd3724d909263769ce190db59acc)
+---
+ src/lib/kdb/kdb5.c | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/src/lib/kdb/kdb5.c b/src/lib/kdb/kdb5.c
+index 47e9b31a7..11e2430c4 100644
+--- a/src/lib/kdb/kdb5.c
++++ b/src/lib/kdb/kdb5.c
+@@ -675,6 +675,8 @@ krb5_db_open(krb5_context kcontext, char **db_args, int mode)
+         return status;
+     status = v->init_module(kcontext, section, db_args, mode);
+     free(section);
++    if (status)
++        (void)krb5_db_fini(kcontext);
+     return status;
+ }
+ 
+@@ -702,6 +704,8 @@ krb5_db_create(krb5_context kcontext, char **db_args)
+         return status;
+     status = v->create(kcontext, section, db_args);
+     free(section);
++    if (status)
++        (void)krb5_db_fini(kcontext);
+     return status;
+ }
+ 

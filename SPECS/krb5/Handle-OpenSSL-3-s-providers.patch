@@ -1,0 +1,301 @@
+From e3f3d31a3db23f6c8437cd0efe45f67a7f4fc6aa Mon Sep 17 00:00:00 2001
+From: Robbie Harwood <rharwood@redhat.com>
+Date: Sat, 15 May 2021 21:18:06 -0400
+Subject: [PATCH] Handle OpenSSL 3's providers
+
+OpenSSL 3 compartmentalizes what algorithms it uses, which for us means
+another hoop to jump through to use dubious cryptography.  (Right now,
+we need to load "legacy" in order to access MD4 and RC4.)
+
+Use our normal initializer logic to set up providers both in the OpenSSL
+provider an the PKINIT plugin.  Since DT_FINI is too late, release them
+using atexit() as OpenSSL does.
+
+(cherry picked from commit bea5a703a06da1f1ab56821b77a2d3661cb0dda4)
+[rharwood@redhat.com: work around des3 removal and rc4 fips changes]
+---
+ src/configure.ac                              |  1 +
+ src/lib/crypto/openssl/enc_provider/aes.c     | 16 ++++++
+ .../crypto/openssl/enc_provider/camellia.c    | 16 ++++++
+ src/lib/crypto/openssl/enc_provider/rc4.c     |  4 ++
+ .../crypto/openssl/hash_provider/hash_evp.c   |  5 ++
+ src/lib/crypto/openssl/init.c                 | 53 +++++++++++++++++++
+ src/plugins/preauth/pkinit/Makefile.in        |  1 +
+ .../preauth/pkinit/pkinit_crypto_openssl.c    | 33 ++++++++++--
+ 8 files changed, 126 insertions(+), 3 deletions(-)
+
+diff --git a/src/configure.ac b/src/configure.ac
+index 9c2e816fe..20066918b 100644
+--- a/src/configure.ac
++++ b/src/configure.ac
+@@ -284,6 +284,7 @@ AC_SUBST(CRYPTO_IMPL_LIBS)
+ 
+ if test "$CRYPTO_IMPL" = openssl; then
+    AC_CHECK_FUNCS(EVP_KDF_fetch)
++   AC_CHECK_FUNCS(OSSL_PROVIDER_load)
+ fi
+ 
+ AC_ARG_WITH([prng-alg],
+diff --git a/src/lib/crypto/openssl/enc_provider/aes.c b/src/lib/crypto/openssl/enc_provider/aes.c
+index 6b4622fe9..31c90a69d 100644
+--- a/src/lib/crypto/openssl/enc_provider/aes.c
++++ b/src/lib/crypto/openssl/enc_provider/aes.c
+@@ -68,6 +68,10 @@ cbc_enc(krb5_key key, const krb5_data *ivec, krb5_crypto_iov *data,
+     EVP_CIPHER_CTX  *ctx;
+     struct iov_cursor cursor;
+ 
++    ret = krb5int_crypto_init();
++    if (ret)
++        return ret;
++
+     ctx = EVP_CIPHER_CTX_new();
+     if (ctx == NULL)
+         return ENOMEM;
+@@ -102,6 +106,10 @@ cbc_decr(krb5_key key, const krb5_data *ivec, krb5_crypto_iov *data,
+     EVP_CIPHER_CTX   *ctx;
+     struct iov_cursor cursor;
+ 
++    ret = krb5int_crypto_init();
++    if (ret)
++        return ret;
++
+     ctx = EVP_CIPHER_CTX_new();
+     if (ctx == NULL)
+         return ENOMEM;
+@@ -137,6 +145,10 @@ cts_encr(krb5_key key, const krb5_data *ivec, krb5_crypto_iov *data,
+     struct iov_cursor      cursor;
+     AES_KEY                enck;
+ 
++    ret = krb5int_crypto_init();
++    if (ret)
++        return ret;
++
+     memset(iv_cts,0,sizeof(iv_cts));
+     if (ivec && ivec->data){
+         if (ivec->length != sizeof(iv_cts))
+@@ -190,6 +202,10 @@ cts_decr(krb5_key key, const krb5_data *ivec, krb5_crypto_iov *data,
+     struct iov_cursor      cursor;
+     AES_KEY                deck;
+ 
++    ret = krb5int_crypto_init();
++    if (ret)
++        return ret;
++
+     memset(iv_cts,0,sizeof(iv_cts));
+     if (ivec && ivec->data){
+         if (ivec->length != sizeof(iv_cts))
+diff --git a/src/lib/crypto/openssl/enc_provider/camellia.c b/src/lib/crypto/openssl/enc_provider/camellia.c
+index f79679a0b..7cc7fc6fb 100644
+--- a/src/lib/crypto/openssl/enc_provider/camellia.c
++++ b/src/lib/crypto/openssl/enc_provider/camellia.c
+@@ -92,6 +92,10 @@ cbc_enc(krb5_key key, const krb5_data *ivec, krb5_crypto_iov *data,
+     EVP_CIPHER_CTX  *ctx;
+     struct iov_cursor cursor;
+ 
++    ret = krb5int_crypto_init();
++    if (ret)
++        return ret;
++
+     ctx = EVP_CIPHER_CTX_new();
+     if (ctx == NULL)
+         return ENOMEM;
+@@ -126,6 +130,10 @@ cbc_decr(krb5_key key, const krb5_data *ivec, krb5_crypto_iov *data,
+     EVP_CIPHER_CTX   *ctx;
+     struct iov_cursor cursor;
+ 
++    ret = krb5int_crypto_init();
++    if (ret)
++        return ret;
++
+     ctx = EVP_CIPHER_CTX_new();
+     if (ctx == NULL)
+         return ENOMEM;
+@@ -161,6 +169,10 @@ cts_encr(krb5_key key, const krb5_data *ivec, krb5_crypto_iov *data,
+     struct iov_cursor      cursor;
+     CAMELLIA_KEY           enck;
+ 
++    ret = krb5int_crypto_init();
++    if (ret)
++        return ret;
++
+     memset(iv_cts,0,sizeof(iv_cts));
+     if (ivec && ivec->data){
+         if (ivec->length != sizeof(iv_cts))
+@@ -214,6 +226,10 @@ cts_decr(krb5_key key, const krb5_data *ivec, krb5_crypto_iov *data,
+     struct iov_cursor      cursor;
+     CAMELLIA_KEY           deck;
+ 
++    ret = krb5int_crypto_init();
++    if (ret)
++        return ret;
++
+     memset(iv_cts,0,sizeof(iv_cts));
+     if (ivec && ivec->data){
+         if (ivec->length != sizeof(iv_cts))
+diff --git a/src/lib/crypto/openssl/enc_provider/rc4.c b/src/lib/crypto/openssl/enc_provider/rc4.c
+index 9bf407899..a10cb5192 100644
+--- a/src/lib/crypto/openssl/enc_provider/rc4.c
++++ b/src/lib/crypto/openssl/enc_provider/rc4.c
+@@ -66,6 +66,10 @@ k5_arcfour_docrypt(krb5_key key, const krb5_data *state, krb5_crypto_iov *data,
+     EVP_CIPHER_CTX *ctx = NULL;
+     struct arcfour_state *arcstate;
+ 
++    ret = krb5int_crypto_init();
++    if (ret)
++        return ret;
++
+     if (FIPS_mode())
+         return KRB5_CRYPTO_INTERNAL;
+ 
+diff --git a/src/lib/crypto/openssl/hash_provider/hash_evp.c b/src/lib/crypto/openssl/hash_provider/hash_evp.c
+index 2eb5139c0..09d7b3896 100644
+--- a/src/lib/crypto/openssl/hash_provider/hash_evp.c
++++ b/src/lib/crypto/openssl/hash_provider/hash_evp.c
+@@ -41,6 +41,11 @@ hash_evp(const EVP_MD *type, const krb5_crypto_iov *data, size_t num_data,
+     const krb5_data *d;
+     size_t i;
+     int ok;
++    krb5_error_code ret;
++
++    ret = krb5int_crypto_init();
++    if (ret)
++        return ret;
+ 
+     if (output->length != (unsigned int)EVP_MD_size(type))
+         return KRB5_CRYPTO_INTERNAL;
+diff --git a/src/lib/crypto/openssl/init.c b/src/lib/crypto/openssl/init.c
+index 1139bce53..f72dbfe81 100644
+--- a/src/lib/crypto/openssl/init.c
++++ b/src/lib/crypto/openssl/init.c
+@@ -26,12 +26,65 @@
+ 
+ #include "crypto_int.h"
+ 
++#ifdef HAVE_OSSL_PROVIDER_LOAD
++
++/*
++ * Starting in OpenSSL 3, algorithms are grouped into containers called
++ * "providers", not all of which are loaded by default.  At time of writing,
++ * we need MD4 and RC4 from the legacy provider.  Oddly, 3DES is not in
++ * legacy.
++ */
++
++#include <openssl/provider.h>
++
++static OSSL_PROVIDER *legacy_provider = NULL;
++static OSSL_PROVIDER *default_provider = NULL;
++
++static void
++unload_providers(void)
++{
++    if (default_provider != NULL)
++        (void)OSSL_PROVIDER_unload(default_provider);
++    if (legacy_provider != NULL)
++        (void)OSSL_PROVIDER_unload(legacy_provider);
++    default_provider = NULL;
++    legacy_provider = NULL;
++}
++
++int
++krb5int_crypto_impl_init(void)
++{
++    legacy_provider = OSSL_PROVIDER_load(NULL, "legacy");
++    default_provider = OSSL_PROVIDER_load(NULL, "default");
++
++    /*
++     * Someone might build openssl without the legacy provider.  They will
++     * have a bad time, but some things will still work.  I don't know think
++     * this configuration is worth supporting.
++     */
++    if (legacy_provider == NULL || default_provider == NULL)
++        abort();
++
++    /*
++     * If we attempt to do this with our normal LIBFINIFUNC logic (DT_FINI),
++     * OpenSSL will have cleaned itself up by the time we're invoked.  OpenSSL
++     * registers its cleanup (OPENSSL_cleanup) with atexit() - do the same and
++     * we'll be higher on the stack.
++     */
++    atexit(unload_providers);
++    return 0;
++}
++
++#else /* !HAVE_OSSL_PROVIDER_LOAD */
++
+ int
+ krb5int_crypto_impl_init(void)
+ {
+     return 0;
+ }
+ 
++#endif
++
+ void
+ krb5int_crypto_impl_cleanup(void)
+ {
+diff --git a/src/plugins/preauth/pkinit/Makefile.in b/src/plugins/preauth/pkinit/Makefile.in
+index 15ca0eb48..d20fb18a8 100644
+--- a/src/plugins/preauth/pkinit/Makefile.in
++++ b/src/plugins/preauth/pkinit/Makefile.in
+@@ -5,6 +5,7 @@ MODULE_INSTALL_DIR = $(KRB5_PA_MODULE_DIR)
+ LIBBASE=pkinit
+ LIBMAJOR=0
+ LIBMINOR=0
++LIBINITFUNC=pkinit_openssl_init
+ RELDIR=../plugins/preauth/pkinit
+ # Depends on libk5crypto and libkrb5
+ SHLIB_EXPDEPS = \
+diff --git a/src/plugins/preauth/pkinit/pkinit_crypto_openssl.c b/src/plugins/preauth/pkinit/pkinit_crypto_openssl.c
+index 350c2118a..42e5c581d 100644
+--- a/src/plugins/preauth/pkinit/pkinit_crypto_openssl.c
++++ b/src/plugins/preauth/pkinit/pkinit_crypto_openssl.c
+@@ -44,6 +44,13 @@
+ #include <openssl/params.h>
+ #endif
+ 
++#ifdef HAVE_OSSL_PROVIDER_LOAD
++#include <openssl/provider.h>
++
++static OSSL_PROVIDER *legacy_provider = NULL;
++static OSSL_PROVIDER *default_provider = NULL;
++#endif
++
+ static krb5_error_code pkinit_init_pkinit_oids(pkinit_plg_crypto_context );
+ static void pkinit_fini_pkinit_oids(pkinit_plg_crypto_context );
+ 
+@@ -2937,12 +2944,32 @@ cleanup:
+     return retval;
+ }
+ 
++/* pkinit_openssl_init() and unload_providers() are largely duplicated from
++ * lib/crypto/openssl/init.c - see explanations there. */
++static void
++unload_providers(void)
++{
++    if (default_provider != NULL)
++        (void)OSSL_PROVIDER_unload(default_provider);
++    if (legacy_provider != NULL)
++        (void)OSSL_PROVIDER_unload(legacy_provider);
++    default_provider = NULL;
++    legacy_provider = NULL;
++}
++
+ int
+ pkinit_openssl_init()
+ {
+-    /* Initialize OpenSSL. */
+-    ERR_load_crypto_strings();
+-    OpenSSL_add_all_algorithms();
++#ifdef HAVE_OSSL_PROVIDER_LOAD
++    legacy_provider = OSSL_PROVIDER_load(NULL, "legacy");
++    default_provider = OSSL_PROVIDER_load(NULL, "default");
++
++    if (legacy_provider == NULL || default_provider == NULL)
++        abort();
++
++    atexit(unload_providers);
++#endif
++
+     return 0;
+ }
+ 

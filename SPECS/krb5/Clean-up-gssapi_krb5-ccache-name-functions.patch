@@ -1,0 +1,193 @@
+From 5e5ea8e8345c8b2f3254b0d346b8e0de0df3a696 Mon Sep 17 00:00:00 2001
+From: Robbie Harwood <rharwood@redhat.com>
+Date: Wed, 26 May 2021 18:22:10 -0400
+Subject: [PATCH] Clean up gssapi_krb5 ccache name functions
+
+Modernize kg_get_ccache_name() and kg_get_ccache_name().  Drop
+unnecessary use of const in kg_get_ccache_name() so that its return
+value can be properly freed.  Fixes some static analyzer false
+positives.
+
+(cherry picked from commit f573f7f8ee5269103a0492d6521a3242c5ffb63b)
+---
+ src/lib/gssapi/krb5/gssapiP_krb5.h |  3 +-
+ src/lib/gssapi/krb5/gssapi_krb5.c  | 47 ++++++++--------------
+ src/lib/gssapi/krb5/set_ccache.c   | 64 ++++++++++++------------------
+ 3 files changed, 42 insertions(+), 72 deletions(-)
+
+diff --git a/src/lib/gssapi/krb5/gssapiP_krb5.h b/src/lib/gssapi/krb5/gssapiP_krb5.h
+index fd7abbd77..88d41130a 100644
+--- a/src/lib/gssapi/krb5/gssapiP_krb5.h
++++ b/src/lib/gssapi/krb5/gssapiP_krb5.h
+@@ -380,8 +380,7 @@ OM_uint32 kg_sync_ccache_name (krb5_context context, OM_uint32 *minor_status);
+ OM_uint32 kg_caller_provided_ccache_name (OM_uint32 *minor_status,
+                                           int *out_caller_provided_name);
+ 
+-OM_uint32 kg_get_ccache_name (OM_uint32 *minor_status,
+-                              const char **out_name);
++OM_uint32 kg_get_ccache_name (OM_uint32 *minor_status, char **out_name);
+ 
+ OM_uint32 kg_set_ccache_name (OM_uint32 *minor_status,
+                               const char *name);
+diff --git a/src/lib/gssapi/krb5/gssapi_krb5.c b/src/lib/gssapi/krb5/gssapi_krb5.c
+index 46aa9b7a5..9915a8bb5 100644
+--- a/src/lib/gssapi/krb5/gssapi_krb5.c
++++ b/src/lib/gssapi/krb5/gssapi_krb5.c
+@@ -253,46 +253,31 @@ kg_caller_provided_ccache_name (OM_uint32 *minor_status,
+ }
+ 
+ OM_uint32
+-kg_get_ccache_name (OM_uint32 *minor_status, const char **out_name)
++kg_get_ccache_name(OM_uint32 *minor_status, char **out_name)
+ {
+-    const char *name = NULL;
+-    OM_uint32 err = 0;
+     char *kg_ccache_name;
++    const char *def_name;
++    OM_uint32 err;
++    krb5_context context;
++
++    *out_name = NULL;
+ 
+     kg_ccache_name = k5_getspecific(K5_KEY_GSS_KRB5_CCACHE_NAME);
+-
+     if (kg_ccache_name != NULL) {
+-        name = strdup(kg_ccache_name);
+-        if (name == NULL)
+-            err = ENOMEM;
++        *out_name = strdup(kg_ccache_name);
++        err = (*out_name == NULL) ? ENOMEM : 0;
+     } else {
+-        krb5_context context = NULL;
+-
+-        /* Reset the context default ccache (see text above), and then
+-           retrieve it.  */
++        /* Use the default ccache name. */
+         err = krb5_gss_init_context(&context);
+-        if (!err)
+-            err = krb5_cc_set_default_name (context, NULL);
+-        if (!err) {
+-            name = krb5_cc_default_name(context);
+-            if (name) {
+-                name = strdup(name);
+-                if (name == NULL)
+-                    err = ENOMEM;
+-            }
+-        }
+-        if (err && context)
+-            save_error_info(err, context);
+-        if (context)
+-            krb5_free_context(context);
+-    }
+-
+-    if (!err) {
+-        if (out_name) {
+-            *out_name = name;
+-        }
++        if (err)
++            goto cleanup;
++        def_name = krb5_cc_default_name(context);
++        *out_name = (def_name != NULL) ? strdup(def_name) : NULL;
++        err = (*out_name == NULL) ? ENOMEM : 0;
++        krb5_free_context(context);
+     }
+ 
++cleanup:
+     *minor_status = err;
+     return (*minor_status == 0) ? GSS_S_COMPLETE : GSS_S_FAILURE;
+ }
+diff --git a/src/lib/gssapi/krb5/set_ccache.c b/src/lib/gssapi/krb5/set_ccache.c
+index 8acf3ec90..91c3462be 100644
+--- a/src/lib/gssapi/krb5/set_ccache.c
++++ b/src/lib/gssapi/krb5/set_ccache.c
+@@ -26,7 +26,7 @@
+ 
+ /*
+  * Set ccache name used by gssapi, and optionally obtain old ccache
+- * name.  Caller should not free returned name.
++ * name.  Caller must not free returned name.
+  */
+ 
+ #include <string.h>
+@@ -38,11 +38,9 @@ gss_krb5int_ccache_name(OM_uint32 *minor_status,
+                         const gss_OID desired_object,
+                         const gss_buffer_t value)
+ {
+-    char *old_name = NULL;
+     OM_uint32 err = 0;
+-    OM_uint32 minor = 0;
+-    char *gss_out_name;
+     struct krb5_gss_ccache_name_req *req;
++    char *old_name, *cur_name = NULL;
+ 
+     err = gss_krb5int_initialize_library();
+     if (err) {
+@@ -57,45 +55,33 @@ gss_krb5int_ccache_name(OM_uint32 *minor_status,
+ 
+     req = (struct krb5_gss_ccache_name_req *)value->value;
+ 
+-    gss_out_name = k5_getspecific(K5_KEY_GSS_KRB5_SET_CCACHE_OLD_NAME);
++    /* Our job is simple if the caller doesn't want the current name. */
++    if (req->out_name == NULL)
++        return kg_set_ccache_name(minor_status, req->name);
+ 
+-    if (req->out_name) {
+-        const char *tmp_name = NULL;
++    /* Fetch the current name and change it. */
++    kg_get_ccache_name(&err, &cur_name);
++    if (err)
++        goto cleanup;
++    kg_set_ccache_name(&err, req->name);
++    if (err)
++        goto cleanup;
+ 
+-        if (!err) {
+-            kg_get_ccache_name (&err, &tmp_name);
+-        }
+-        if (!err) {
+-            old_name = gss_out_name;
+-            gss_out_name = (char *)tmp_name;
+-        }
+-    }
+-    /* If out_name was NULL, we keep the same gss_out_name value, and
+-       don't free up any storage (leave old_name NULL).  */
++    /* Store the current name in a thread-specific variable.  Free that
++     * variable's previous contents. */
++    old_name = k5_getspecific(K5_KEY_GSS_KRB5_SET_CCACHE_OLD_NAME);
++    err = k5_setspecific(K5_KEY_GSS_KRB5_SET_CCACHE_OLD_NAME, cur_name);
++    if (err)
++        goto cleanup;
++    free(old_name);
+ 
+-    if (!err)
+-        kg_set_ccache_name (&err, req->name);
+-
+-    minor = k5_setspecific(K5_KEY_GSS_KRB5_SET_CCACHE_OLD_NAME, gss_out_name);
+-    if (minor) {
+-        /* Um.  Now what?  */
+-        if (err == 0) {
+-            err = minor;
+-        }
+-        free(gss_out_name);
+-        gss_out_name = NULL;
+-    }
+-
+-    if (!err) {
+-        if (req->out_name) {
+-            *(req->out_name) = gss_out_name;
+-        }
+-    }
+-
+-    if (old_name != NULL) {
+-        free (old_name);
+-    }
++    /* Give the caller an alias to the stored value. */
++    *req->out_name = cur_name;
++    cur_name = NULL;
++    err = 0;
+ 
++cleanup:
++    free(cur_name);
+     *minor_status = err;
+     return (*minor_status == 0) ? GSS_S_COMPLETE : GSS_S_FAILURE;
+ }

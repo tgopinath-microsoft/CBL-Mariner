@@ -1,0 +1,22 @@
+From 37e1fe755c6e976253a7f40ec7a9e740e4329789 Mon Sep 17 00:00:00 2001
+From: Greg Hudson <ghudson@mit.edu>
+Date: Mon, 21 Jun 2021 19:15:26 -0400
+Subject: [PATCH] Use asan in one of the CI builds
+
+(cherry picked from commit 7368354bcd0b58480a88b1fb81e63bd6aae7edf2)
+---
+ .github/workflows/build.yml | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/.github/workflows/build.yml b/.github/workflows/build.yml
+index 8d1042b7b..06a35b7b9 100644
+--- a/.github/workflows/build.yml
++++ b/.github/workflows/build.yml
+@@ -17,6 +17,7 @@ jobs:
+                       os: ubuntu-18.04
+                       compiler: clang
+                       makevars: CPPFLAGS=-Werror
++                      configureopts: --enable-asan
+                     - name: linux-clang-openssl
+                       os: ubuntu-18.04
+                       compiler: clang

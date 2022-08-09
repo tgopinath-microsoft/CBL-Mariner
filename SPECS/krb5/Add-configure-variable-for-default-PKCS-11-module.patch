@@ -1,0 +1,201 @@
+From 2a91dabd9752825b96faf3b25ea643d5282c5957 Mon Sep 17 00:00:00 2001
+From: Julien Rische <jrische@redhat.com>
+Date: Fri, 22 Apr 2022 14:12:37 +0200
+Subject: [PATCH] Add configure variable for default PKCS#11 module
+
+[ghudson@mit.edu: added documentation of configure variable and doc
+substitution; shortened commit message]
+
+ticket: 9058 (new)
+---
+ doc/admin/conf_files/krb5_conf.rst  |  2 +-
+ doc/build/options2configure.rst     |  3 +++
+ doc/conf.py                         |  3 +++
+ doc/mitK5defaults.rst               | 25 +++++++++++++------------
+ src/configure.ac                    |  8 ++++++++
+ src/doc/Makefile.in                 |  2 ++
+ src/man/Makefile.in                 |  4 +++-
+ src/man/krb5.conf.man               |  2 +-
+ src/plugins/preauth/pkinit/pkinit.h |  1 -
+ 9 files changed, 34 insertions(+), 16 deletions(-)
+
+diff --git a/doc/admin/conf_files/krb5_conf.rst b/doc/admin/conf_files/krb5_conf.rst
+index adba8238d..3d25c9a12 100644
+--- a/doc/admin/conf_files/krb5_conf.rst
++++ b/doc/admin/conf_files/krb5_conf.rst
+@@ -1020,7 +1020,7 @@ information for PKINIT is as follows:
+     All keyword/values are optional.  *modname* specifies the location
+     of a library implementing PKCS #11.  If a value is encountered
+     with no keyword, it is assumed to be the *modname*.  If no
+-    module-name is specified, the default is ``opensc-pkcs11.so``.
++    module-name is specified, the default is |pkcs11_modname|.
+     ``slotid=`` and/or ``token=`` may be specified to force the use of
+     a particular smard card reader or token if there is more than one
+     available.  ``certid=`` and/or ``certlabel=`` may be specified to
+diff --git a/doc/build/options2configure.rst b/doc/build/options2configure.rst
+index a8959626d..8f8ac911c 100644
+--- a/doc/build/options2configure.rst
++++ b/doc/build/options2configure.rst
+@@ -143,6 +143,9 @@ Environment variables
+     This option allows one to specify libraries to be passed to the
+     linker (e.g., ``-l<library>``)
+ 
++**PKCS11_MODNAME=**\ *library*
++    Override the built-in default PKCS11 library name.
++
+ **SS_LIB=**\ *libs*...
+     If ``-lss`` is not the correct way to link in your installed ss
+     library, for example if additional support libraries are needed,
+diff --git a/doc/conf.py b/doc/conf.py
+index a876fd633..252ab891a 100644
+--- a/doc/conf.py
++++ b/doc/conf.py
+@@ -242,6 +242,7 @@ if 'mansubs' in tags:
+     ccache = '``@CCNAME@``'
+     keytab = '``@KTNAME@``'
+     ckeytab = '``@CKTNAME@``'
++    pkcs11_modname = '``@PKCS11MOD@``'
+ elif 'pathsubs' in tags:
+     # Read configured paths from a file produced by the build system.
+     exec(open("paths.py").read())
+@@ -255,6 +256,7 @@ else:
+     ccache = ':ref:`DEFCCNAME <paths>`'
+     keytab = ':ref:`DEFKTNAME <paths>`'
+     ckeytab = ':ref:`DEFCKTNAME <paths>`'
++    pkcs11_modname = ':ref:`PKCS11_MODNAME <paths>`'
+ 
+ rst_epilog = '\n'
+ 
+@@ -275,6 +277,7 @@ else:
+     rst_epilog += '.. |ccache| replace:: %s\n' % ccache
+     rst_epilog += '.. |keytab| replace:: %s\n' % keytab
+     rst_epilog += '.. |ckeytab| replace:: %s\n' % ckeytab
++    rst_epilog += '.. |pkcs11_modname| replace:: %s\n' % pkcs11_modname
+     rst_epilog += '''
+ .. |krb5conf| replace:: ``/etc/krb5.conf``
+ .. |defkeysalts| replace:: ``aes256-cts-hmac-sha1-96:normal aes128-cts-hmac-sha1-96:normal``
+diff --git a/doc/mitK5defaults.rst b/doc/mitK5defaults.rst
+index 74e69f4ad..aea7af3db 100644
+--- a/doc/mitK5defaults.rst
++++ b/doc/mitK5defaults.rst
+@@ -59,18 +59,19 @@ subdirectories of ``/usr/local``.  When MIT krb5 is integrated into an
+ operating system, the paths are generally chosen to match the
+ operating system's filesystem layout.
+ 
+-==========================  =============  ===========================  ===========================
+-Description                 Symbolic name  Custom build path            Typical OS path
+-==========================  =============  ===========================  ===========================
+-User programs               BINDIR         ``/usr/local/bin``           ``/usr/bin``
+-Libraries and plugins       LIBDIR         ``/usr/local/lib``           ``/usr/lib``
+-Parent of KDC state dir     LOCALSTATEDIR  ``/usr/local/var``           ``/var``
+-Parent of KDC runtime dir   RUNSTATEDIR    ``/usr/local/var/run``       ``/run``
+-Administrative programs     SBINDIR        ``/usr/local/sbin``          ``/usr/sbin``
+-Alternate krb5.conf dir     SYSCONFDIR     ``/usr/local/etc``           ``/etc``
+-Default ccache name         DEFCCNAME      ``FILE:/tmp/krb5cc_%{uid}``  ``FILE:/tmp/krb5cc_%{uid}``
+-Default keytab name         DEFKTNAME      ``FILE:/etc/krb5.keytab``    ``FILE:/etc/krb5.keytab``
+-==========================  =============  ===========================  ===========================
++==========================  ==============  ===========================  ===========================
++Description                 Symbolic name   Custom build path            Typical OS path
++==========================  ==============  ===========================  ===========================
++User programs               BINDIR          ``/usr/local/bin``           ``/usr/bin``
++Libraries and plugins       LIBDIR          ``/usr/local/lib``           ``/usr/lib``
++Parent of KDC state dir     LOCALSTATEDIR   ``/usr/local/var``           ``/var``
++Parent of KDC runtime dir   RUNSTATEDIR     ``/usr/local/var/run``       ``/run``
++Administrative programs     SBINDIR         ``/usr/local/sbin``          ``/usr/sbin``
++Alternate krb5.conf dir     SYSCONFDIR      ``/usr/local/etc``           ``/etc``
++Default ccache name         DEFCCNAME       ``FILE:/tmp/krb5cc_%{uid}``  ``FILE:/tmp/krb5cc_%{uid}``
++Default keytab name         DEFKTNAME       ``FILE:/etc/krb5.keytab``    ``FILE:/etc/krb5.keytab``
++Default PKCS11 module       PKCS11_MODNAME  ``opensc-pkcs11.so``         ``opensc-pkcs11.so``
++==========================  ==============  ===========================  ===========================
+ 
+ The default client keytab name (DEFCKTNAME) typically defaults to
+ ``FILE:/usr/local/var/krb5/user/%{euid}/client.keytab`` for a custom
+diff --git a/src/configure.ac b/src/configure.ac
+index 82b049af9..52e6563da 100644
+--- a/src/configure.ac
++++ b/src/configure.ac
+@@ -1442,6 +1442,14 @@ AC_DEFINE_UNQUOTED(DEFKTNAME, ["$DEFKTNAME"], [Define to default keytab name])
+ AC_DEFINE_UNQUOTED(DEFCKTNAME, ["$DEFCKTNAME"],
+                    [Define to default client keytab name])
+ 
++AC_ARG_VAR(PKCS11_MODNAME, [Default PKCS11 module name])
++if test "${PKCS11_MODNAME+set}" != set; then
++	PKCS11_MODNAME=opensc-pkcs11.so
++fi
++AC_MSG_NOTICE([Default PKCS11 module name: $PKCS11_MODNAME])
++AC_DEFINE_UNQUOTED(PKCS11_MODNAME, ["$PKCS11_MODNAME"],
++                   [Default PKCS11 module name])
++
+ AC_CONFIG_FILES([build-tools/krb5-config], [chmod +x build-tools/krb5-config])
+ AC_CONFIG_FILES([build-tools/kadm-server.pc
+ 	build-tools/kadm-client.pc
+diff --git a/src/doc/Makefile.in b/src/doc/Makefile.in
+index 379bc3651..a1b0cff0a 100644
+--- a/src/doc/Makefile.in
++++ b/src/doc/Makefile.in
+@@ -10,6 +10,7 @@ sysconfdir=@sysconfdir@
+ DEFCCNAME=@DEFCCNAME@
+ DEFKTNAME=@DEFKTNAME@
+ DEFCKTNAME=@DEFCKTNAME@
++PKCS11_MODNAME=@PKCS11_MODNAME@
+ 
+ RST_SOURCES= _static \
+ 	_templates \
+@@ -118,6 +119,7 @@ paths.py:
+ 	echo 'ccache = "``$(DEFCCNAME)``"' >> $@
+ 	echo 'keytab = "``$(DEFKTNAME)``"' >> $@
+ 	echo 'ckeytab = "``$(DEFCKTNAME)``"' >> $@
++	echo 'pkcs11_modname = "``$(PKCS11_MODNAME)``"' >> $@
+ 
+ # Dummy rule that man/Makefile can invoke
+ version.py: $(docsrc)/version.py
+diff --git a/src/man/Makefile.in b/src/man/Makefile.in
+index 00b1b2de0..85cae0914 100644
+--- a/src/man/Makefile.in
++++ b/src/man/Makefile.in
+@@ -8,6 +8,7 @@ sysconfdir=@sysconfdir@
+ DEFCCNAME=@DEFCCNAME@
+ DEFKTNAME=@DEFKTNAME@
+ DEFCKTNAME=@DEFCKTNAME@
++PKCS11_MODNAME=@PKCS11_MODNAME@
+ 
+ MANSUBS=k5identity.sub k5login.sub k5srvutil.sub kadm5.acl.sub kadmin.sub \
+ 	kadmind.sub kdb5_ldap_util.sub kdb5_util.sub kdc.conf.sub \
+@@ -47,7 +48,8 @@ $(docsrc)/version.py: $(top_srcdir)/patchlevel.h
+ 	    -e 's|@SYSCONFDIR@|$(sysconfdir)|g' \
+ 	    -e 's|@CCNAME@|$(DEFCCNAME)|g' \
+ 	    -e 's|@KTNAME@|$(DEFKTNAME)|g' \
+-	    -e 's|@CKTNAME@|$(DEFCKTNAME)|g' $? > $@
++	    -e 's|@CKTNAME@|$(DEFCKTNAME)|g' \
++	    -e 's|@PKCS11MOD@|$(PKCS11_MODNAME)|g' $? > $@
+ 
+ all: $(MANSUBS)
+ 
+diff --git a/src/man/krb5.conf.man b/src/man/krb5.conf.man
+index e993d5c09..42f5ea4f9 100644
+--- a/src/man/krb5.conf.man
++++ b/src/man/krb5.conf.man
+@@ -1151,7 +1151,7 @@ user\(aqs certificate and private key.
+ All keyword/values are optional.  \fImodname\fP specifies the location
+ of a library implementing PKCS #11.  If a value is encountered
+ with no keyword, it is assumed to be the \fImodname\fP\&.  If no
+-module\-name is specified, the default is \fBopensc\-pkcs11.so\fP\&.
++module\-name is specified, the default is \fB@PKCS11MOD@\fP\&.
+ \fBslotid=\fP and/or \fBtoken=\fP may be specified to force the use of
+ a particular smard card reader or token if there is more than one
+ available.  \fBcertid=\fP and/or \fBcertlabel=\fP may be specified to
+diff --git a/src/plugins/preauth/pkinit/pkinit.h b/src/plugins/preauth/pkinit/pkinit.h
+index b437fd53f..a2018cb10 100644
+--- a/src/plugins/preauth/pkinit/pkinit.h
++++ b/src/plugins/preauth/pkinit/pkinit.h
+@@ -42,7 +42,6 @@
+ #ifndef WITHOUT_PKCS11
+ #include "pkcs11.h"
+ 
+-#define PKCS11_MODNAME "opensc-pkcs11.so"
+ #define PK_SIGLEN_GUESS 1000
+ #define PK_NOSLOT 999999
+ #endif
+-- 
+2.35.1
+
