@@ -1,0 +1,20 @@
+NS cwrap.org ns1.cwrap.org
+NS cwrap.org ns2.cwrap.org
+A brokenrecord.com
+A cwrap.org 127.0.0.21
+AAAA cwrap6.org 2a00:1450:4013:c01::63
+SRV _ldap._tcp.cwrap.org ldap.cwrap.org 389 1 5
+SRV _krb5._tcp.cwrap.org krb5.cwrap.org 88
+SOA cwrap.org ns1.cwrap.org admin.cwrap.org 2014100457 3600 300 1814400 600
+CNAME rwrap.org web.cwrap.org
+CNAME web.cwrap.org www.cwrap.org
+A www.cwrap.org 127.0.0.22
+A krb5.cwrap.org 127.0.0.23
+A ns1.cwrap.org 127.0.0.24
+A ns2.cwrap.org 127.0.0.25
+URI _vpn.cwrap.org https://vpn.cwrap.org/VPN 2 5
+URI _vpn.cwrap.org https://vpn2.cwrap.org/VPN 2 10
+URI _vpn.cwrap.org https://vpn3.cwrap.org/VPN 2 20
+URI _ftp.cwrap.org ftp://ftp.cwrap.org/public
+PTR 22.0.0.127.in-addr.arpa www.cwrap.org
+TXT cwrap.org v=spf1 mx

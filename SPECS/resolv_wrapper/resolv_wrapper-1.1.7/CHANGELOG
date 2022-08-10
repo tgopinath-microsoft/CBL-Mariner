@@ -1,0 +1,42 @@
+CHANGELOG
+=========
+
+version 1.1.7 (released 2020-08-25)
+  * Move debug messages from error to warning
+
+version 1.1.6 (released 2020-03-23)
+  * Added support for running with Sanitizers
+  * Added fake resolving of TXT records
+  * Improved logging support
+  * Fixed resolv.conf support on FreeBSD
+  * Fixed alignment issues on FreeBSD
+  * Fixed using IPv6 address with old glibc versions
+
+version 1.1.5 (released 2016-09-08)
+  * Added support for faking PTR entries
+  * Added support for faking URI entries
+
+version 1.1.4 (released 2016-05-31)
+  * Added support for faking NS entries
+  * Fixed some platform compatibility bugs
+
+version 1.1.3 (released 2015-01-13)
+  * Fixed symbol detection if macros are used for res_* functions
+  * Fixed strict aliasing warnings for symbol binding
+  * Added missing tests for req_query and res_search
+
+version 1.1.2 (released 2015-01-13)
+  * Fix detection for ns_name_compress.
+
+version 1.1.1 (released 2015-01-12)
+  * Fixed building on older Linux distributions.
+  * Fix a possible segfault.
+
+version 1.1.0 (released 2014-12-02)
+  * Added case insensitive comparison of dns names (dns faking).
+  * Added support complete dns names (trailing dot) (dns faking).
+  * Added support for recursive name resolving (dns faking).
+  * Fixed calculation of response size (dns faking).
+
+version 1.0.0 (released 2014-10-24)
+  * Initial release

@@ -1,0 +1,1089 @@
+From 94b70c525eaa623a455bb31240546d6cb2bab249 Mon Sep 17 00:00:00 2001
+From: Stefan Metzmacher <metze@samba.org>
+Date: Fri, 15 Feb 2019 17:24:57 +0100
+Subject: [PATCH 1/7] tests/test_res_init.c: avoid using public ipv6 addresses
+ from google in tests
+
+Signed-off-by: Stefan Metzmacher <metze@samba.org>
+---
+ tests/test_res_init.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/tests/test_res_init.c b/tests/test_res_init.c
+index 5cd3591..7f73378 100644
+--- a/tests/test_res_init.c
++++ b/tests/test_res_init.c
+@@ -83,10 +83,10 @@ static void test_res_ninit(void **state)
+ 	const char *nameservers[] = {
+ 		"127.0.0.1",
+ 		"10.10.10.1",
+-		"2607:f8b0:4009:802::1011",
++		"fd53:53:53:53::1011",
+ 		"10.10.10.2",
+ 		"10.10.10.3",
+-		"2607:f8b0:4009:802::1012",
++		"fd53:53:53:53::1012",
+ 		NULL,
+ 	};
+ 	int i;
+-- 
+2.26.2
+
+
+From 8400a73d75df840b5eed7103fff52ba35f3b5f81 Mon Sep 17 00:00:00 2001
+From: Stefan Metzmacher <metze@samba.org>
+Date: Thu, 14 Feb 2019 15:46:22 +0100
+Subject: [PATCH 2/7] rwrap: fix resolv wrapper with ipv6 addresses and old
+ glibc versions
+
+The handling of __res_state._u._ext was different before
+this glibc commit (e.g. glibc-2.19):
+
+  commit 2212c1420c92a33b0e0bd9a34938c9814a56c0f7
+  Author:     Andreas Schwab <schwab@suse.de>
+  AuthorDate: Thu Feb 19 15:52:08 2015 +0100
+  Commit:     Andreas Schwab <schwab@suse.de>
+  CommitDate: Thu May 21 15:16:37 2015 +0200
+
+      Simplify handling of nameserver configuration in resolver
+
+      Remove use of ext.nsmap member of struct __res_state and always use
+      an identity mapping betwen the nsaddr_list array and the ext.nsaddrs
+      array.  The fact that a nameserver has an IPv6 address is signalled by
+      setting nsaddr_list[].sin_family to zero.
+
+As a result of fixing this, it's now possible to run 'test_res_init'
+even without using resolv_wrapper.
+
+Signed-off-by: Stefan Metzmacher <metze@samba.org>
+---
+ src/resolv_wrapper.c  | 53 +++++++++++++++++++++++++------------------
+ tests/test_res_init.c | 26 ++++++++++-----------
+ 2 files changed, 43 insertions(+), 36 deletions(-)
+
+diff --git a/src/resolv_wrapper.c b/src/resolv_wrapper.c
+index cbca248..20ba2d1 100644
+--- a/src/resolv_wrapper.c
++++ b/src/resolv_wrapper.c
+@@ -1645,14 +1645,13 @@ static int rwrap_parse_resolv_conf(struct __res_state *state,
+ 
+ 			ok = inet_pton(AF_INET, p, &a);
+ 			if (ok) {
+-				state->nsaddr_list[state->nscount] = (struct sockaddr_in) {
++				state->nsaddr_list[nserv] = (struct sockaddr_in) {
+ 					.sin_family = AF_INET,
+ 					.sin_addr = a,
+ 					.sin_port = htons(53),
+ 					.sin_zero = { 0 },
+ 				};
+ 
+-				state->nscount++;
+ 				nserv++;
+ 			} else {
+ #ifdef HAVE_RESOLV_IPV6_NSADDRS
+@@ -1673,11 +1672,11 @@ static int rwrap_parse_resolv_conf(struct __res_state *state,
+ 					sa6->sin6_flowinfo = 0;
+ 					sa6->sin6_addr = a6;
+ 
+-					state->_u._ext.nsaddrs[state->_u._ext.nscount] = sa6;
+-					state->_u._ext.nssocks[state->_u._ext.nscount] = -1;
+-					state->_u._ext.nsmap[state->_u._ext.nscount] = MAXNS + 1;
++					state->_u._ext.nsaddrs[nserv] = sa6;
++					state->_u._ext.nssocks[nserv] = -1;
++					state->_u._ext.nsmap[nserv] = MAXNS + 1;
+ 
+-					state->_u._ext.nscount++;
++					state->_u._ext.nscount6++;
+ 					nserv++;
+ 				} else {
+ 					RWRAP_LOG(RWRAP_LOG_ERROR,
+@@ -1700,6 +1699,13 @@ static int rwrap_parse_resolv_conf(struct __res_state *state,
+ 		} /* TODO: match other keywords */
+ 	}
+ 
++	/*
++	 * note that state->_u._ext.nscount is left as 0,
++	 * this matches glibc and allows resolv wrapper
++	 * to work with most (maybe all) glibc versions.
++	 */
++	state->nscount = nserv;
++
+ 	if (ferror(fp)) {
+ 		RWRAP_LOG(RWRAP_LOG_ERROR,
+ 			  "Reading from %s failed",
+@@ -1725,21 +1731,36 @@ static int rwrap_res_ninit(struct __res_state *state)
+ 		const char *resolv_conf = getenv("RESOLV_WRAPPER_CONF");
+ 
+ 		if (resolv_conf != NULL) {
++			/* Delete name servers */
++#ifdef HAVE_RESOLV_IPV6_NSADDRS
+ 			uint16_t i;
+ 
+-			(void)i; /* maybe unused */
++			for (i = 0; i < state->nscount; i++) {
++				if (state->_u._ext.nssocks[i] != -1) {
++					close(state->_u._ext.nssocks[i]);
++					state->_u._ext.nssocks[i] = -1;
++				}
++
++				SAFE_FREE(state->_u._ext.nsaddrs[i]);
++			}
++#endif
+ 
+-			/* Delete name servers */
+ 			state->nscount = 0;
+ 			memset(state->nsaddr_list, 0, sizeof(state->nsaddr_list));
+ 
+ #ifdef HAVE_RESOLV_IPV6_NSADDRS
++			state->ipv6_unavail = false;
++			state->_u._ext.nsinit = 0;
+ 			state->_u._ext.nscount = 0;
+-			for (i = 0; i < state->_u._ext.nscount; i++) {
+-				SAFE_FREE(state->_u._ext.nsaddrs[i]);
++			state->_u._ext.nscount6 = 0;
++			for (i = 0; i < MAXNS; i++) {
++				state->_u._ext.nsaddrs[i] = NULL;
++				state->_u._ext.nssocks[i] = -1;
++				state->_u._ext.nsmap[i] = MAXNS;
+ 			}
+ #endif
+ 
++			/* And parse the new name servers */
+ 			rc = rwrap_parse_resolv_conf(state, resolv_conf);
+ 		}
+ 	}
+@@ -1786,19 +1807,7 @@ int __res_init(void)
+ 
+ static void rwrap_res_nclose(struct __res_state *state)
+ {
+-#ifdef HAVE_RESOLV_IPV6_NSADDRS
+-	int i;
+-#endif
+-
+ 	libc_res_nclose(state);
+-
+-#ifdef HAVE_RESOLV_IPV6_NSADDRS
+-	if (state != NULL) {
+-		for (i = 0; i < state->_u._ext.nscount; i++) {
+-			SAFE_FREE(state->_u._ext.nsaddrs[i]);
+-		}
+-	}
+-#endif
+ }
+ 
+ #if !defined(res_nclose) && defined(HAVE_RES_NCLOSE)
+diff --git a/tests/test_res_init.c b/tests/test_res_init.c
+index 7f73378..f0cd2ee 100644
+--- a/tests/test_res_init.c
++++ b/tests/test_res_init.c
+@@ -121,26 +121,17 @@ static void test_res_ninit(void **state)
+ 
+ 	/*
+ 	 * Validate the number of parsed name servers.
+-	 */
+-
+-	assert_int_equal(dnsstate.nscount + dnsstate._u._ext.nscount, MAXNS);
+-
+-#ifndef HAVE_RESOLV_IPV6_NSADDRS
+-	/*
++	*
+ 	 * On platforms that don't support IPv6, the v6 address is skipped
+ 	 * and we end up reading three v4 addresses.
+-	 */
+-	assert_int_equal(dnsstate.nscount, MAXNS);
+-#else
+-	/*
++	 *
+ 	 * test we have two v4 and one v6 server
+ 	 *
+ 	 * Note: This test assumes MAXNS == 3, which is the
+ 	 * case on all systems encountered so far.
+ 	 */
+-	assert_int_equal(dnsstate.nscount, 2);
+-	assert_int_equal(dnsstate._u._ext.nscount, 1);
+-#endif /* HAVE_RESOLV_IPV6_NSADDRS */
++	assert_int_equal(MAXNS, 3);
++	assert_int_equal(dnsstate.nscount, MAXNS);
+ 
+ 	/* Validate the servers. */
+ 
+@@ -150,12 +141,18 @@ static void test_res_ninit(void **state)
+ 	inet_ntop(AF_INET, &(dnsstate.nsaddr_list[0].sin_addr),
+ 		  straddr, INET6_ADDRSTRLEN);
+ 	assert_string_equal(nameservers[0], straddr);
++#ifdef HAVE_RESOLV_IPV6_NSADDRS
++	assert_null(dnsstate._u._ext.nsaddrs[0]);
++#endif
+ 
+ 	assert_int_equal(dnsstate.nsaddr_list[1].sin_family, AF_INET);
+ 	assert_int_equal(dnsstate.nsaddr_list[1].sin_port, htons(53));
+ 	inet_ntop(AF_INET, &(dnsstate.nsaddr_list[1].sin_addr),
+ 		  straddr, INET6_ADDRSTRLEN);
+ 	assert_string_equal(nameservers[1], straddr);
++#ifdef HAVE_RESOLV_IPV6_NSADDRS
++	assert_null(dnsstate._u._ext.nsaddrs[1]);
++#endif
+ 
+ #ifndef HAVE_RESOLV_IPV6_NSADDRS
+ 	/*
+@@ -169,7 +166,8 @@ static void test_res_ninit(void **state)
+ 	assert_string_equal(nameservers[3], straddr);
+ #else
+ 	/* IPv6 */
+-	sa6 = dnsstate._u._ext.nsaddrs[0];
++	assert_non_null(dnsstate._u._ext.nsaddrs[2]);
++	sa6 = dnsstate._u._ext.nsaddrs[2];
+ 	assert_int_equal(sa6->sin6_family, AF_INET6);
+ 	assert_int_equal(sa6->sin6_port, htons(53));
+ 	inet_ntop(AF_INET6, &(sa6->sin6_addr), straddr, INET6_ADDRSTRLEN);
+-- 
+2.26.2
+
+
+From d2090f1407852215b5dc0656b9cd81acb33f0841 Mon Sep 17 00:00:00 2001
+From: Stefan Metzmacher <metze@samba.org>
+Date: Wed, 18 Mar 2020 17:01:48 +0100
+Subject: [PATCH 3/7] rwrap: let configure use define
+ HAVE_RES_STATE_U_EXT_NSADDRS
+
+The configure check should describe what it checked for.
+Let the code logic decide if that means we expect
+HAVE_RESOLV_IPV6_NSADDRS to be defined.
+
+We'll get another condition that sets HAVE_RESOLV_IPV6_NSADDRS
+in the following commits.
+
+Signed-off-by: Stefan Metzmacher <metze@samba.org>
+---
+ ConfigureChecks.cmake |  4 +++-
+ config.h.cmake        |  2 +-
+ src/resolv_wrapper.c  |  4 ++++
+ tests/test_res_init.c | 24 ++++++++++++------------
+ 4 files changed, 20 insertions(+), 14 deletions(-)
+
+diff --git a/ConfigureChecks.cmake b/ConfigureChecks.cmake
+index ae9437b..4752cd4 100644
+--- a/ConfigureChecks.cmake
++++ b/ConfigureChecks.cmake
+@@ -173,7 +173,9 @@ int main(void) {
+     return 0;
+ }" HAVE_IPV6)
+ 
+-check_struct_has_member("struct __res_state" _u._ext.nsaddrs resolv.h HAVE_RESOLV_IPV6_NSADDRS)
++check_struct_has_member("struct __res_state" _u._ext.nsaddrs
++                        "sys/socket.h;netinet/in.h;resolv.h"
++                        HAVE_RES_STATE_U_EXT_NSADDRS)
+ 
+ check_c_source_compiles("
+ void log_fn(const char *format, ...) __attribute__ ((format (printf, 1, 2)));
+diff --git a/config.h.cmake b/config.h.cmake
+index 0c2fa35..75e6902 100644
+--- a/config.h.cmake
++++ b/config.h.cmake
+@@ -55,7 +55,7 @@
+ /**************************** OPTIONS ****************************/
+ 
+ #cmakedefine HAVE_IPV6 1
+-#cmakedefine HAVE_RESOLV_IPV6_NSADDRS 1
++#cmakedefine HAVE_RES_STATE_U_EXT_NSADDRS 1
+ 
+ #cmakedefine HAVE_ATTRIBUTE_PRINTF_FORMAT 1
+ #cmakedefine HAVE_DESTRUCTOR_ATTRIBUTE 1
+diff --git a/src/resolv_wrapper.c b/src/resolv_wrapper.c
+index 20ba2d1..0ee9fee 100644
+--- a/src/resolv_wrapper.c
++++ b/src/resolv_wrapper.c
+@@ -52,6 +52,10 @@
+ 
+ #include <resolv.h>
+ 
++#ifdef HAVE_RES_STATE_U_EXT_NSADDRS
++#define HAVE_RESOLV_IPV6_NSADDRS 1
++#endif
++
+ /* GCC has printf type attribute check. */
+ #ifdef HAVE_ATTRIBUTE_PRINTF_FORMAT
+ #define PRINTF_ATTRIBUTE(a,b) __attribute__ ((__format__ (__printf__, a, b)))
+diff --git a/tests/test_res_init.c b/tests/test_res_init.c
+index f0cd2ee..eb0eee7 100644
+--- a/tests/test_res_init.c
++++ b/tests/test_res_init.c
+@@ -92,7 +92,7 @@ static void test_res_ninit(void **state)
+ 	int i;
+ 	int rv;
+ 	char straddr[INET6_ADDRSTRLEN] = { '\0' };
+-#ifdef HAVE_RESOLV_IPV6_NSADDRS
++#ifdef HAVE_RES_STATE_U_EXT_NSADDRS
+ 	struct sockaddr_in6 *sa6;
+ #endif
+ 
+@@ -141,7 +141,7 @@ static void test_res_ninit(void **state)
+ 	inet_ntop(AF_INET, &(dnsstate.nsaddr_list[0].sin_addr),
+ 		  straddr, INET6_ADDRSTRLEN);
+ 	assert_string_equal(nameservers[0], straddr);
+-#ifdef HAVE_RESOLV_IPV6_NSADDRS
++#ifdef HAVE_RES_STATE_U_EXT_NSADDRS
+ 	assert_null(dnsstate._u._ext.nsaddrs[0]);
+ #endif
+ 
+@@ -150,11 +150,19 @@ static void test_res_ninit(void **state)
+ 	inet_ntop(AF_INET, &(dnsstate.nsaddr_list[1].sin_addr),
+ 		  straddr, INET6_ADDRSTRLEN);
+ 	assert_string_equal(nameservers[1], straddr);
+-#ifdef HAVE_RESOLV_IPV6_NSADDRS
++#ifdef HAVE_RES_STATE_U_EXT_NSADDRS
+ 	assert_null(dnsstate._u._ext.nsaddrs[1]);
+ #endif
+ 
+-#ifndef HAVE_RESOLV_IPV6_NSADDRS
++#ifdef HAVE_RES_STATE_U_EXT_NSADDRS
++	/* IPv6 */
++	assert_non_null(dnsstate._u._ext.nsaddrs[2]);
++	sa6 = dnsstate._u._ext.nsaddrs[2];
++	assert_int_equal(sa6->sin6_family, AF_INET6);
++	assert_int_equal(sa6->sin6_port, htons(53));
++	inet_ntop(AF_INET6, &(sa6->sin6_addr), straddr, INET6_ADDRSTRLEN);
++	assert_string_equal(nameservers[2], straddr);
++#else
+ 	/*
+ 	 * On platforms that don't support IPv6, the v6 address is skipped
+ 	 * and we end up reading three v4 addresses.
+@@ -164,14 +172,6 @@ static void test_res_ninit(void **state)
+ 	inet_ntop(AF_INET, &(dnsstate.nsaddr_list[2].sin_addr),
+ 		  straddr, INET6_ADDRSTRLEN);
+ 	assert_string_equal(nameservers[3], straddr);
+-#else
+-	/* IPv6 */
+-	assert_non_null(dnsstate._u._ext.nsaddrs[2]);
+-	sa6 = dnsstate._u._ext.nsaddrs[2];
+-	assert_int_equal(sa6->sin6_family, AF_INET6);
+-	assert_int_equal(sa6->sin6_port, htons(53));
+-	inet_ntop(AF_INET6, &(sa6->sin6_addr), straddr, INET6_ADDRSTRLEN);
+-	assert_string_equal(nameservers[2], straddr);
+ #endif
+ 
+ 	res_nclose(&dnsstate);
+-- 
+2.26.2
+
+
+From 628f6e47449ac5d5a72fb48e5384bda504bf97a4 Mon Sep 17 00:00:00 2001
+From: Stefan Metzmacher <metze@samba.org>
+Date: Tue, 10 Mar 2020 13:07:25 +0100
+Subject: [PATCH 4/7] rwrap: split out a rwrap_reset_nameservers() function
+
+This will make it easier to add support for ipv6 nameservers
+on FreeBSD in the following commits.
+
+Signed-off-by: Stefan Metzmacher <metze@samba.org>
+---
+ src/resolv_wrapper.c | 56 ++++++++++++++++++++------------------------
+ 1 file changed, 26 insertions(+), 30 deletions(-)
+
+diff --git a/src/resolv_wrapper.c b/src/resolv_wrapper.c
+index 0ee9fee..7c5bf81 100644
+--- a/src/resolv_wrapper.c
++++ b/src/resolv_wrapper.c
+@@ -1606,6 +1606,29 @@ static int libc_res_nsearch(struct __res_state *state,
+  *   RES_HELPER
+  ***************************************************************************/
+ 
++static void rwrap_reset_nameservers(struct __res_state *state)
++{
++#ifdef HAVE_RES_STATE_U_EXT_NSADDRS
++	size_t i;
++
++	for (i = 0; i < (size_t)state->nscount; i++) {
++		if (state->_u._ext.nssocks[i] != -1) {
++			close(state->_u._ext.nssocks[i]);
++			state->_u._ext.nssocks[i] = -1;
++		}
++		SAFE_FREE(state->_u._ext.nsaddrs[i]);
++	}
++	memset(&state->_u._ext, 0, sizeof(state->_u._ext));
++	for (i = 0; i < MAXNS; i++) {
++		state->_u._ext.nssocks[i] = -1;
++		state->_u._ext.nsmap[i] = MAXNS + 1;
++	}
++	state->ipv6_unavail = false;
++#endif
++	memset(state->nsaddr_list, 0, sizeof(state->nsaddr_list));
++	state->nscount = 0;
++}
++
+ static int rwrap_parse_resolv_conf(struct __res_state *state,
+ 				   const char *resolv_conf)
+ {
+@@ -1613,6 +1636,8 @@ static int rwrap_parse_resolv_conf(struct __res_state *state,
+ 	char buf[BUFSIZ];
+ 	int nserv = 0;
+ 
++	rwrap_reset_nameservers(state);
++
+ 	fp = fopen(resolv_conf, "r");
+ 	if (fp == NULL) {
+ 		RWRAP_LOG(RWRAP_LOG_ERROR,
+@@ -1735,36 +1760,6 @@ static int rwrap_res_ninit(struct __res_state *state)
+ 		const char *resolv_conf = getenv("RESOLV_WRAPPER_CONF");
+ 
+ 		if (resolv_conf != NULL) {
+-			/* Delete name servers */
+-#ifdef HAVE_RESOLV_IPV6_NSADDRS
+-			uint16_t i;
+-
+-			for (i = 0; i < state->nscount; i++) {
+-				if (state->_u._ext.nssocks[i] != -1) {
+-					close(state->_u._ext.nssocks[i]);
+-					state->_u._ext.nssocks[i] = -1;
+-				}
+-
+-				SAFE_FREE(state->_u._ext.nsaddrs[i]);
+-			}
+-#endif
+-
+-			state->nscount = 0;
+-			memset(state->nsaddr_list, 0, sizeof(state->nsaddr_list));
+-
+-#ifdef HAVE_RESOLV_IPV6_NSADDRS
+-			state->ipv6_unavail = false;
+-			state->_u._ext.nsinit = 0;
+-			state->_u._ext.nscount = 0;
+-			state->_u._ext.nscount6 = 0;
+-			for (i = 0; i < MAXNS; i++) {
+-				state->_u._ext.nsaddrs[i] = NULL;
+-				state->_u._ext.nssocks[i] = -1;
+-				state->_u._ext.nsmap[i] = MAXNS;
+-			}
+-#endif
+-
+-			/* And parse the new name servers */
+ 			rc = rwrap_parse_resolv_conf(state, resolv_conf);
+ 		}
+ 	}
+@@ -1811,6 +1806,7 @@ int __res_init(void)
+ 
+ static void rwrap_res_nclose(struct __res_state *state)
+ {
++	rwrap_reset_nameservers(state);
+ 	libc_res_nclose(state);
+ }
+ 
+-- 
+2.26.2
+
+
+From dea2e9eeb9677b145a26ff23d9a01226dbd9b6ae Mon Sep 17 00:00:00 2001
+From: Stefan Metzmacher <metze@samba.org>
+Date: Tue, 10 Mar 2020 13:07:25 +0100
+Subject: [PATCH 5/7] rwrap: split out rwrap_{get,log}_nameservers() functions
+
+This will make it easier to add support for ipv6 nameservers
+on FreeBSD in the next step.
+
+Signed-off-by: Stefan Metzmacher <metze@samba.org>
+---
+ src/resolv_wrapper.c | 98 ++++++++++++++++++++++++++++++++------------
+ 1 file changed, 72 insertions(+), 26 deletions(-)
+
+diff --git a/src/resolv_wrapper.c b/src/resolv_wrapper.c
+index 7c5bf81..c97ad26 100644
+--- a/src/resolv_wrapper.c
++++ b/src/resolv_wrapper.c
+@@ -177,6 +177,12 @@ static void rwrap_log(enum rwrap_dbglvl_e dbglvl,
+ 
+ #define RWRAP_MAX_RECURSION 64
+ 
++union rwrap_sockaddr {
++	struct sockaddr sa;
++	struct sockaddr_in in;
++	struct sockaddr_in6 in6;
++};
++
+ /* Priority and weight can be omitted from the hosts file, but need to be part
+  * of the output
+  */
+@@ -1606,6 +1612,70 @@ static int libc_res_nsearch(struct __res_state *state,
+  *   RES_HELPER
+  ***************************************************************************/
+ 
++static size_t rwrap_get_nameservers(struct __res_state *state,
++				    size_t nserv,
++				    union rwrap_sockaddr *nsaddrs)
++{
++	size_t i;
++
++	memset(nsaddrs, 0, sizeof(*nsaddrs) * nserv);
++
++	if (nserv > (size_t)state->nscount) {
++		nserv = (size_t)state->nscount;
++	}
++
++	for (i = 0; i < nserv; i++) {
++#ifdef HAVE_RES_STATE_U_EXT_NSADDRS
++		if (state->_u._ext.nsaddrs[i] != NULL) {
++			nsaddrs[i] = (union rwrap_sockaddr) {
++				.in6 = *state->_u._ext.nsaddrs[i],
++			};
++		} else
++#endif /* HAVE_RES_STATE_U_EXT_NSADDRS */
++		{
++			nsaddrs[i] = (union rwrap_sockaddr) {
++				.in = state->nsaddr_list[i],
++			};
++		}
++	}
++
++	return nserv;
++}
++
++static void rwrap_log_nameservers(enum rwrap_dbglvl_e dbglvl,
++				  const char *func,
++				  struct __res_state *state)
++{
++	union rwrap_sockaddr nsaddrs[MAXNS];
++	size_t nserv = MAXNS;
++	size_t i;
++
++	memset(nsaddrs, 0, sizeof(nsaddrs));
++	nserv = rwrap_get_nameservers(state, nserv, nsaddrs);
++	for (i = 0; i < nserv; i++) {
++		char ip[INET6_ADDRSTRLEN];
++
++		switch (nsaddrs[i].sa.sa_family) {
++		case AF_INET:
++			inet_ntop(AF_INET, &(nsaddrs[i].in.sin_addr),
++				  ip, sizeof(ip));
++			break;
++		case AF_INET6:
++			inet_ntop(AF_INET6, &(nsaddrs[i].in6.sin6_addr),
++				  ip, sizeof(ip));
++			break;
++		default:
++			snprintf(ip, sizeof(ip), "<unknown sa_family=%d",
++				 nsaddrs[i].sa.sa_family);
++			break;
++		}
++
++		rwrap_log(dbglvl, func,
++			  "        nameserver: %s",
++			  ip);
++	}
++}
++
+ static void rwrap_reset_nameservers(struct __res_state *state)
+ {
+ #ifdef HAVE_RES_STATE_U_EXT_NSADDRS
+@@ -1850,23 +1920,11 @@ static int rwrap_res_nquery(struct __res_state *state,
+ {
+ 	int rc;
+ 	const char *fake_hosts;
+-#ifndef NDEBUG
+-	int i;
+-#endif
+ 
+ 	RWRAP_LOG(RWRAP_LOG_TRACE,
+ 		  "Resolve the domain name [%s] - class=%d, type=%d",
+ 		  dname, class, type);
+-#ifndef NDEBUG
+-	for (i = 0; i < state->nscount; i++) {
+-		char ip[INET6_ADDRSTRLEN];
+-
+-		inet_ntop(AF_INET, &state->nsaddr_list[i].sin_addr, ip, sizeof(ip));
+-		RWRAP_LOG(RWRAP_LOG_TRACE,
+-			  "        nameserver: %s",
+-			  ip);
+-	}
+-#endif
++	rwrap_log_nameservers(RWRAP_LOG_TRACE, __func__, state);
+ 
+ 	fake_hosts = getenv("RESOLV_WRAPPER_HOSTS");
+ 	if (fake_hosts != NULL) {
+@@ -1959,23 +2017,11 @@ static int rwrap_res_nsearch(struct __res_state *state,
+ {
+ 	int rc;
+ 	const char *fake_hosts;
+-#ifndef NDEBUG
+-	int i;
+-#endif
+ 
+ 	RWRAP_LOG(RWRAP_LOG_TRACE,
+ 		  "Resolve the domain name [%s] - class=%d, type=%d",
+ 		  dname, class, type);
+-#ifndef NDEBUG
+-	for (i = 0; i < state->nscount; i++) {
+-		char ip[INET6_ADDRSTRLEN];
+-
+-		inet_ntop(AF_INET, &state->nsaddr_list[i].sin_addr, ip, sizeof(ip));
+-		RWRAP_LOG(RWRAP_LOG_TRACE,
+-			  "        nameserver: %s",
+-			  ip);
+-	}
+-#endif
++	rwrap_log_nameservers(RWRAP_LOG_TRACE, __func__, state);
+ 
+ 	fake_hosts = getenv("RESOLV_WRAPPER_HOSTS");
+ 	if (fake_hosts != NULL) {
+-- 
+2.26.2
+
+
+From 1eb3d53e07e029e317fda3715370d779f0dbadbb Mon Sep 17 00:00:00 2001
+From: Stefan Metzmacher <metze@samba.org>
+Date: Tue, 10 Mar 2020 13:07:25 +0100
+Subject: [PATCH 6/7] rwrap: split out a rwrap_set_nameservers() function
+
+This will make it easier to add support for ipv6 nameservers
+on FreeBSD in the next step.
+
+Signed-off-by: Stefan Metzmacher <metze@samba.org>
+---
+ src/resolv_wrapper.c | 140 +++++++++++++++++++++++++++----------------
+ 1 file changed, 90 insertions(+), 50 deletions(-)
+
+diff --git a/src/resolv_wrapper.c b/src/resolv_wrapper.c
+index c97ad26..e1903c9 100644
+--- a/src/resolv_wrapper.c
++++ b/src/resolv_wrapper.c
+@@ -1699,14 +1699,65 @@ static void rwrap_reset_nameservers(struct __res_state *state)
+ 	state->nscount = 0;
+ }
+ 
++static int rwrap_set_nameservers(struct __res_state *state,
++				 size_t nserv,
++				 const union rwrap_sockaddr *nsaddrs)
++{
++	size_t i;
++
++	if (nserv > MAXNS) {
++		nserv = MAXNS;
++	}
++	rwrap_reset_nameservers(state);
++
++	for (i = 0; i < nserv; i++) {
++		switch (nsaddrs[i].sa.sa_family) {
++		case AF_INET:
++			state->nsaddr_list[i] = nsaddrs[i].in;
++			break;
++#ifdef HAVE_RES_STATE_U_EXT_NSADDRS
++		case AF_INET6:
++			state->_u._ext.nsaddrs[i] = malloc(sizeof(nsaddrs[i].in6));
++			if (state->_u._ext.nsaddrs[i] == NULL) {
++				rwrap_reset_nameservers(state);
++				errno = ENOMEM;
++				return -1;
++			}
++			*state->_u._ext.nsaddrs[i] = nsaddrs[i].in6;
++			state->_u._ext.nssocks[i] = -1;
++			state->_u._ext.nsmap[i] = MAXNS + 1;
++			state->_u._ext.nscount6++;
++			break;
++#endif
++		default:
++			RWRAP_LOG(RWRAP_LOG_ERROR,
++				  "Internal error unhandled sa_family=%d",
++				  nsaddrs[i].sa.sa_family);
++			rwrap_reset_nameservers(state);
++			errno = ENOSYS;
++			return -1;
++		}
++	}
++
++	/*
++	 * note that state->_u._ext.nscount is left as 0,
++	 * this matches glibc and allows resolv wrapper
++	 * to work with most (maybe all) glibc versions.
++	 */
++	state->nscount = i;
++
++	return 0;
++}
++
+ static int rwrap_parse_resolv_conf(struct __res_state *state,
+ 				   const char *resolv_conf)
+ {
+ 	FILE *fp;
+ 	char buf[BUFSIZ];
+-	int nserv = 0;
++	size_t nserv = 0;
++	union rwrap_sockaddr nsaddrs[MAXNS];
+ 
+-	rwrap_reset_nameservers(state);
++	memset(nsaddrs, 0, sizeof(nsaddrs));
+ 
+ 	fp = fopen(resolv_conf, "r");
+ 	if (fp == NULL) {
+@@ -1726,6 +1777,7 @@ static int rwrap_parse_resolv_conf(struct __res_state *state,
+ 
+ 		if (RESOLV_MATCH(buf, "nameserver") && nserv < MAXNS) {
+ 			struct in_addr a;
++			struct in6_addr a6;
+ 			char *q;
+ 			int ok;
+ 
+@@ -1744,67 +1796,46 @@ static int rwrap_parse_resolv_conf(struct __res_state *state,
+ 
+ 			ok = inet_pton(AF_INET, p, &a);
+ 			if (ok) {
+-				state->nsaddr_list[nserv] = (struct sockaddr_in) {
+-					.sin_family = AF_INET,
+-					.sin_addr = a,
+-					.sin_port = htons(53),
+-					.sin_zero = { 0 },
++				nsaddrs[nserv] = (union rwrap_sockaddr) {
++					.in = {
++						.sin_family = AF_INET,
++						.sin_addr = a,
++						.sin_port = htons(53),
++						.sin_zero = { 0 },
++					},
+ 				};
+ 
+ 				nserv++;
+-			} else {
++				continue;
++			}
++
++			ok = inet_pton(AF_INET6, p, &a6);
++			if (ok) {
+ #ifdef HAVE_RESOLV_IPV6_NSADDRS
+-				/* IPv6 */
+-				struct in6_addr a6;
+-				ok = inet_pton(AF_INET6, p, &a6);
+-				if (ok) {
+-					struct sockaddr_in6 *sa6;
+-
+-					sa6 = malloc(sizeof(*sa6));
+-					if (sa6 == NULL) {
+-						fclose(fp);
+-						return -1;
+-					}
+-
+-					sa6->sin6_family = AF_INET6;
+-					sa6->sin6_port = htons(53);
+-					sa6->sin6_flowinfo = 0;
+-					sa6->sin6_addr = a6;
+-
+-					state->_u._ext.nsaddrs[nserv] = sa6;
+-					state->_u._ext.nssocks[nserv] = -1;
+-					state->_u._ext.nsmap[nserv] = MAXNS + 1;
+-
+-					state->_u._ext.nscount6++;
+-					nserv++;
+-				} else {
+-					RWRAP_LOG(RWRAP_LOG_ERROR,
+-						"Malformed DNS server");
+-					continue;
+-				}
++				nsaddrs[nserv] = (union rwrap_sockaddr) {
++					.in6 = {
++
++						.sin6_family = AF_INET6,
++						.sin6_port = htons(53),
++						.sin6_flowinfo = 0,
++						.sin6_addr = a6,
++					},
++				};
++				nserv++;
++				continue;
+ #else /* !HAVE_RESOLV_IPV6_NSADDRS */
+-				/*
+-				 * BSD uses an opaque structure to store the
+-				 * IPv6 addresses. So we can not simply store
+-				 * these addresses the same way as above.
+-				 */
+ 				RWRAP_LOG(RWRAP_LOG_WARN,
+ 					  "resolve_wrapper does not support "
+ 					  "IPv6 on this platform");
+-					continue;
++				continue;
+ #endif
+ 			}
++
++			RWRAP_LOG(RWRAP_LOG_ERROR, "Malformed DNS server[%s]", p);
+ 			continue;
+ 		} /* TODO: match other keywords */
+ 	}
+ 
+-	/*
+-	 * note that state->_u._ext.nscount is left as 0,
+-	 * this matches glibc and allows resolv wrapper
+-	 * to work with most (maybe all) glibc versions.
+-	 */
+-	state->nscount = nserv;
+-
+ 	if (ferror(fp)) {
+ 		RWRAP_LOG(RWRAP_LOG_ERROR,
+ 			  "Reading from %s failed",
+@@ -1814,7 +1845,16 @@ static int rwrap_parse_resolv_conf(struct __res_state *state,
+ 	}
+ 
+ 	fclose(fp);
+-	return 0;
++
++	if (nserv == 0) {
++		RWRAP_LOG(RWRAP_LOG_ERROR,
++			  "No usable nameservers found in %s",
++			  resolv_conf);
++		errno = ESRCH;
++		return -1;
++	}
++
++	return rwrap_set_nameservers(state, nserv, nsaddrs);
+ }
+ 
+ /****************************************************************************
+-- 
+2.26.2
+
+
+From a3f6bba5805860184fb8a4fa8c6591b326784f83 Mon Sep 17 00:00:00 2001
+From: Stefan Metzmacher <metze@samba.org>
+Date: Tue, 10 Mar 2020 13:11:40 +0100
+Subject: [PATCH 7/7] rwrap: make use of res_{get,set}servers() for FreeBSD
+
+This way don't depend on the opaque structure on FreeBSD
+and have support for ipv6 nameservers.
+
+Signed-off-by: Stefan Metzmacher <metze@samba.org>
+---
+ ConfigureChecks.cmake |  6 +++
+ config.h.cmake        |  2 +
+ src/resolv_wrapper.c  | 85 ++++++++++++++++++++++++++++++++++++++++++-
+ tests/test_res_init.c | 40 ++++++++++++++++++++
+ 4 files changed, 132 insertions(+), 1 deletion(-)
+
+diff --git a/ConfigureChecks.cmake b/ConfigureChecks.cmake
+index 4752cd4..8444232 100644
+--- a/ConfigureChecks.cmake
++++ b/ConfigureChecks.cmake
+@@ -176,6 +176,12 @@ int main(void) {
+ check_struct_has_member("struct __res_state" _u._ext.nsaddrs
+                         "sys/socket.h;netinet/in.h;resolv.h"
+                         HAVE_RES_STATE_U_EXT_NSADDRS)
++check_struct_has_member("union res_sockaddr_union" sin
++                        "sys/socket.h;netinet/in.h;resolv.h"
++                        HAVE_RES_SOCKADDR_UNION_SIN)
++check_struct_has_member("union res_sockaddr_union" sin6
++                        "sys/socket.h;netinet/in.h;resolv.h"
++                        HAVE_RES_SOCKADDR_UNION_SIN6)
+ 
+ check_c_source_compiles("
+ void log_fn(const char *format, ...) __attribute__ ((format (printf, 1, 2)));
+diff --git a/config.h.cmake b/config.h.cmake
+index 75e6902..8eba17b 100644
+--- a/config.h.cmake
++++ b/config.h.cmake
+@@ -56,6 +56,8 @@
+ 
+ #cmakedefine HAVE_IPV6 1
+ #cmakedefine HAVE_RES_STATE_U_EXT_NSADDRS 1
++#cmakedefine HAVE_RES_SOCKADDR_UNION_SIN 1
++#cmakedefine HAVE_RES_SOCKADDR_UNION_SIN6 1
+ 
+ #cmakedefine HAVE_ATTRIBUTE_PRINTF_FORMAT 1
+ #cmakedefine HAVE_DESTRUCTOR_ATTRIBUTE 1
+diff --git a/src/resolv_wrapper.c b/src/resolv_wrapper.c
+index e1903c9..0d3f34c 100644
+--- a/src/resolv_wrapper.c
++++ b/src/resolv_wrapper.c
+@@ -52,7 +52,7 @@
+ 
+ #include <resolv.h>
+ 
+-#ifdef HAVE_RES_STATE_U_EXT_NSADDRS
++#if defined(HAVE_RES_STATE_U_EXT_NSADDRS) || defined(HAVE_RES_SOCKADDR_UNION_SIN6)
+ #define HAVE_RESOLV_IPV6_NSADDRS 1
+ #endif
+ 
+@@ -1616,6 +1616,45 @@ static size_t rwrap_get_nameservers(struct __res_state *state,
+ 				    size_t nserv,
+ 				    union rwrap_sockaddr *nsaddrs)
+ {
++#ifdef HAVE_RES_SOCKADDR_UNION_SIN
++	union res_sockaddr_union set[MAXNS];
++	size_t i;
++	int rc;
++
++	memset(set, 0, sizeof(set));
++	memset(nsaddrs, 0, sizeof(*nsaddrs) * nserv);
++
++	if (nserv > MAXNS) {
++		nserv = MAXNS;
++	}
++
++	rc = res_getservers(state, set, nserv);
++	if (rc <= 0) {
++		return 0;
++	}
++	if (rc < nserv) {
++		nserv = rc;
++	}
++
++	for (i = 0; i < nserv; i++) {
++		switch (set[i].sin.sin_family) {
++		case AF_INET:
++			nsaddrs[i] = (union rwrap_sockaddr) {
++				.in = set[i].sin,
++			};
++			break;
++#ifdef HAVE_RES_SOCKADDR_UNION_SIN6
++		case AF_INET6:
++			nsaddrs[i] = (union rwrap_sockaddr) {
++				.in6 = set[i].sin6,
++			};
++			break;
++#endif
++		}
++	}
++
++	return nserv;
++#else /* ! HAVE_RES_SOCKADDR_UNION_SIN */
+ 	size_t i;
+ 
+ 	memset(nsaddrs, 0, sizeof(*nsaddrs) * nserv);
+@@ -1640,6 +1679,7 @@ static size_t rwrap_get_nameservers(struct __res_state *state,
+ 	}
+ 
+ 	return nserv;
++#endif /* ! HAVE_RES_SOCKADDR_UNION_SIN */
+ }
+ 
+ static void rwrap_log_nameservers(enum rwrap_dbglvl_e dbglvl,
+@@ -1678,6 +1718,9 @@ static void rwrap_log_nameservers(enum rwrap_dbglvl_e dbglvl,
+ 
+ static void rwrap_reset_nameservers(struct __res_state *state)
+ {
++#ifdef HAVE_RES_SOCKADDR_UNION_SIN
++	res_setservers(state, NULL, 0);
++#else /* ! HAVE_RES_SOCKADDR_UNION_SIN */
+ #ifdef HAVE_RES_STATE_U_EXT_NSADDRS
+ 	size_t i;
+ 
+@@ -1697,12 +1740,51 @@ static void rwrap_reset_nameservers(struct __res_state *state)
+ #endif
+ 	memset(state->nsaddr_list, 0, sizeof(state->nsaddr_list));
+ 	state->nscount = 0;
++#endif /* ! HAVE_RES_SOCKADDR_UNION_SIN */
+ }
+ 
+ static int rwrap_set_nameservers(struct __res_state *state,
+ 				 size_t nserv,
+ 				 const union rwrap_sockaddr *nsaddrs)
+ {
++#ifdef HAVE_RES_SOCKADDR_UNION_SIN
++	union res_sockaddr_union set[MAXNS];
++	size_t i;
++
++	memset(set, 0, sizeof(set));
++
++	if (nserv > MAXNS) {
++		nserv = MAXNS;
++	}
++
++	rwrap_reset_nameservers(state);
++
++	for (i = 0; i < nserv; i++) {
++		switch (nsaddrs[i].sa.sa_family) {
++		case AF_INET:
++			set[i] = (union res_sockaddr_union) {
++				.sin = nsaddrs[i].in,
++			};
++			break;
++#ifdef HAVE_RES_SOCKADDR_UNION_SIN6
++		case AF_INET6:
++			set[i] = (union res_sockaddr_union) {
++				.sin6 = nsaddrs[i].in6,
++			};
++			break;
++#endif
++		default:
++			RWRAP_LOG(RWRAP_LOG_ERROR,
++				  "Internal error unhandled sa_family=%d",
++				  nsaddrs[i].sa.sa_family);
++			errno = ENOSYS;
++			return -1;
++		}
++	}
++
++	res_setservers(state, set, nserv);
++	return 0;
++#else /* ! HAVE_RES_SOCKADDR_UNION_SIN */
+ 	size_t i;
+ 
+ 	if (nserv > MAXNS) {
+@@ -1747,6 +1829,7 @@ static int rwrap_set_nameservers(struct __res_state *state,
+ 	state->nscount = i;
+ 
+ 	return 0;
++#endif /* ! HAVE_RES_SOCKADDR_UNION_SIN */
+ }
+ 
+ static int rwrap_parse_resolv_conf(struct __res_state *state,
+diff --git a/tests/test_res_init.c b/tests/test_res_init.c
+index eb0eee7..b79e28c 100644
+--- a/tests/test_res_init.c
++++ b/tests/test_res_init.c
+@@ -92,6 +92,9 @@ static void test_res_ninit(void **state)
+ 	int i;
+ 	int rv;
+ 	char straddr[INET6_ADDRSTRLEN] = { '\0' };
++#ifdef HAVE_RES_SOCKADDR_UNION_SIN
++	union res_sockaddr_union set[MAXNS*5];
++#endif
+ #ifdef HAVE_RES_STATE_U_EXT_NSADDRS
+ 	struct sockaddr_in6 *sa6;
+ #endif
+@@ -131,6 +134,41 @@ static void test_res_ninit(void **state)
+ 	 * case on all systems encountered so far.
+ 	 */
+ 	assert_int_equal(MAXNS, 3);
++#ifdef HAVE_RES_SOCKADDR_UNION_SIN
++	memset(set, 0, sizeof(set));
++	rv = res_getservers(&dnsstate, set, MAXNS+5);
++	assert_int_equal(rv, MAXNS);
++
++	/* IPv4 */
++	assert_int_equal(set[0].sin.sin_family, AF_INET);
++	assert_int_equal(set[0].sin.sin_port, htons(53));
++	inet_ntop(AF_INET, &(set[0].sin.sin_addr),
++		  straddr, INET6_ADDRSTRLEN);
++	assert_string_equal(nameservers[0], straddr);
++
++	assert_int_equal(set[1].sin.sin_family, AF_INET);
++	assert_int_equal(set[1].sin.sin_port, htons(53));
++	inet_ntop(AF_INET, &(set[1].sin.sin_addr), straddr, INET6_ADDRSTRLEN);
++	assert_string_equal(nameservers[1], straddr);
++
++#ifdef HAVE_RES_SOCKADDR_UNION_SIN6
++	/* IPv6 */
++	assert_int_equal(set[2].sin6.sin6_family, AF_INET6);
++	assert_int_equal(set[2].sin6.sin6_port, htons(53));
++	inet_ntop(AF_INET6, &(set[2].sin6.sin6_addr), straddr, INET6_ADDRSTRLEN);
++	assert_string_equal(nameservers[2], straddr);
++#else /* ! HAVE_RES_SOCKADDR_UNION_SIN6 */
++	/*
++	 * On platforms that don't support IPv6, the v6 address is skipped
++	 * and we end up reading three v4 addresses.
++	 */
++	assert_int_equal(set[2].sin.sin_family, AF_INET);
++	assert_int_equal(set[2].sin.sin_port, htons(53));
++	inet_ntop(AF_INET, &(set[2].sin.sin_addr), straddr, INET6_ADDRSTRLEN);
++	assert_string_equal(nameservers[3], straddr);
++#endif /* ! HAVE_RES_SOCKADDR_UNION_SIN6 */
++
++#else /* ! HAVE_RES_SOCKADDR_UNION_SIN */
+ 	assert_int_equal(dnsstate.nscount, MAXNS);
+ 
+ 	/* Validate the servers. */
+@@ -174,6 +212,8 @@ static void test_res_ninit(void **state)
+ 	assert_string_equal(nameservers[3], straddr);
+ #endif
+ 
++#endif /* ! HAVE_RES_SOCKADDR_UNION_SIN */
++
+ 	res_nclose(&dnsstate);
+ }
+ 
+-- 
+2.26.2
+

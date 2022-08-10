@@ -1,0 +1,58 @@
+From c75587f858eb49e6b13ab610e63289df0485ddac Mon Sep 17 00:00:00 2001
+From: Andreas Schneider <asn@samba.org>
+Date: Wed, 3 Nov 2021 15:12:22 +0100
+Subject: [PATCH] cmake: Fix detection of a fully seperate libresolv
+
+With glibc 2.24 all res_* symbols moved from libresolv to libc. This means
+that socket_wrapper is not able to do the traffic to the DNS server. This
+leaves us only with DNS faking.
+
+Signed-off-by: Andreas Schneider <asn@samba.org>
+Reviewed-by: Ralph Boehme <slow@samba.org>
+---
+ ConfigureChecks.cmake | 21 ++++++++++++++++++---
+ 1 file changed, 18 insertions(+), 3 deletions(-)
+
+diff --git a/ConfigureChecks.cmake b/ConfigureChecks.cmake
+index 8444232..6eb00da 100644
+--- a/ConfigureChecks.cmake
++++ b/ConfigureChecks.cmake
+@@ -57,12 +57,23 @@ check_function_exists(getexecname HAVE_GETEXECNAME)
+ 
+ find_library(RESOLV_LIRBRARY resolv)
+ if (RESOLV_LIRBRARY)
+-    set(HAVE_LIBRESOLV TRUE)
++    check_function_exists(res_nquery HAVE_LIBC_RES_INIT)
++    check_function_exists(__res_query HAVE_LIBC__RES_INIT)
++
++    if (NOT HAVE_LIBC_RES_INIT AND NOT HAVE_LIBC__RES_INIT)
++        set(CMAKE_REQUIRED_LIBRARIES ${RESOLV_LIRBRARY})
++        check_function_exists(res_query HAVE_RES_QUERY)
++        check_function_exists(__res_query HAVE___RES_QUERY)
++        unset(CMAKE_REQUIRED_LIBRARIES)
++
++        if (HAVE_RES_QUERY OR HAVE___RES_QUERY)
++            set(HAVE_LIBRESOLV 1)
++
++        endif()
++    endif()
+ 
+     # If we have a libresolv, we need to check functions linking the library
+     list(APPEND _REQUIRED_LIBRARIES ${RESOLV_LIRBRARY})
+-else()
+-    message(STATUS "libresolv not found on ${CMAKE_SYSTEM_NAME}: Only dns faking will be available")
+ endif()
+ 
+ set(CMAKE_REQUIRED_LIBRARIES ${RESOLV_LIRBRARY})
+@@ -205,4 +216,8 @@ int main(void) {
+ # ENDIAN
+ test_big_endian(WORDS_BIGENDIAN)
+ 
++if (NOT HAVE_LIBRESOLV)
++    message(STATUS "Limited features: Only dns faking will be available")
++endif()
++
+ set(RWRAP_REQUIRED_LIBRARIES ${_REQUIRED_LIBRARIES} CACHE INTERNAL "resolv_wrapper required system libraries")
+-- 
+GitLab
+

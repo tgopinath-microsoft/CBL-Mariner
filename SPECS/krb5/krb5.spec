@@ -117,7 +117,7 @@ License: MIT
 URL: https://web.mit.edu/kerberos/www/
 BuildRequires: autoconf, bison, make, flex, gawk, gettext, pkgconfig, sed
 BuildRequires: gcc, gcc-c++
-BuildRequires: libcom_err-devel, libedit-devel, libss-devel
+BuildRequires: e2fsprogs, e2fsprogs-libs, libedit-devel, libss-devel
 BuildRequires: gzip, ncurses-devel
 BuildRequires: python3, python3-sphinx
 BuildRequires: keyutils, keyutils-libs-devel >= 1.5.8
@@ -156,7 +156,7 @@ practice of sending passwords over the network in unencrypted form.
 Summary: Development files needed to compile Kerberos 5 programs
 Requires: %{name}-libs%{?_isa} = %{version}-%{release}
 Requires: libkadm5%{?_isa} = %{version}-%{release}
-Requires: libcom_err-devel
+Requires: e2fsprogs, e2fsprogs-libs
 Requires: keyutils-libs-devel, libselinux-devel
 Requires: libverto-devel
 Provides: krb5-kdb-devel-version = %{kdbversion}

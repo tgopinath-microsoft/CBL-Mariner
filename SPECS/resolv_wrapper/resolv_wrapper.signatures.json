@@ -1,0 +1,7 @@
+{
+ "Signatures": {
+  "resolv_wrapper-1.1.7.tar.gz": "460ae7fd5e53485be7dd99a55c5922f1cb1636b9e8821981d49ad16507c8a074",
+  "resolv_wrapper-1.1.7.tar.gz.asc": "e75cd0da93baa1cce97d4be70f964766fd90d85d7fe8b73106927e8aca3a4021",
+  "resolv_wrapper.keyring": "3861ac6763ff3edf0bbbb05fe890962a5dbcd99b2e00fae16687fd480c7fab0f"
+ }
+}

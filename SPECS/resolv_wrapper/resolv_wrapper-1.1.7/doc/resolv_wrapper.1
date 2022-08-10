@@ -1,0 +1,173 @@
+'\" t
+.\"     Title: resolv_wrapper
+.\"    Author: The Samba Team
+.\" Generator: DocBook XSL Stylesheets vsnapshot <http://docbook.sf.net/>
+.\"      Date: 2020-01-31
+.\"    Manual: \ \&
+.\"    Source: \ \&
+.\"  Language: English
+.\"
+.TH "RESOLV_WRAPPER" "1" "2020\-01\-31" "\ \&" "\ \&"
+.\" -----------------------------------------------------------------
+.\" * Define some portability stuff
+.\" -----------------------------------------------------------------
+.\" ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+.\" http://bugs.debian.org/507673
+.\" http://lists.gnu.org/archive/html/groff/2009-02/msg00013.html
+.\" ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+.ie \n(.g .ds Aq \(aq
+.el       .ds Aq '
+.\" -----------------------------------------------------------------
+.\" * set default formatting
+.\" -----------------------------------------------------------------
+.\" disable hyphenation
+.nh
+.\" disable justification (adjust text to left margin only)
+.ad l
+.\" -----------------------------------------------------------------
+.\" * MAIN CONTENT STARTS HERE *
+.\" -----------------------------------------------------------------
+.SH "NAME"
+resolv_wrapper \- A wrapper for dns name resolving or dns faking\&.
+.SH "SYNOPSIS"
+.sp
+LD_PRELOAD=libresolv_wrapper\&.so RESOLV_WRAPPER_CONF="/path/to/resolv\&.conf" \fB\&./myapplication\fR
+.SH "DESCRIPTION"
+.sp
+resolv_wrapper makes it possible on most UNIX platforms to contact your own DNS implementation in your test environment\&. It requires socket_wrapper to be able to contact it\&. If it doesn\(cqt work on a special platform the wrapper is able to fake DNS queries and return valid responses to your application\&.
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+Redirects name queries to the nameservers specified in your resolv\&.conf
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+Can fake DNS queries using a simple formatted DNS hosts file\&.
+.RE
+.SH "ENVIRONMENT VARIABLES"
+.PP
+\fBRESOLV_WRAPPER_CONF\fR
+.RS 4
+This is used to specify the resolv\&.conf to use\&. The format of the resolv\&.conf file is defined in the manpage
+\fIresolv\&.conf(5)\fR\&. Currently only the
+\fBnamserver\fR
+directive is supported\&.
+.RE
+.PP
+\fBRESOLV_WRAPPER_HOSTS\fR
+.RS 4
+This environment variable is used for faking DNS queries\&. It must point to a hosts\-like text file that specifies fake records for custom queries\&. The format of the file looks like this:
+.sp
+.if n \{\
+.RS 4
+.\}
+.nf
+TYPE    RECORD_NAME RECORD_VALUE
+.fi
+.if n \{\
+.RE
+.\}
+.RE
+.sp
+For example:
+.sp
+.if n \{\
+.RS 4
+.\}
+.nf
+A       dc\&.cwrap\&.org 127\&.0\&.0\&.10
+AAAA    dc\&.cwrap\&.org fd00::5357:5f0a
+CNAME   kerberos\&.cwrap\&.org dc\&.cwrap\&.org
+SRV     _kerberos\&._tcp\&.cwrap\&.org kerberos\&.cwrap\&.org 88
+URI     _vpn\&.cwrap\&.org https://vpn\&.cwrap\&.org/VPN
+TXT     cwrap\&.org v=spf1 mx
+.fi
+.if n \{\
+.RE
+.\}
+.PP
+\fBRESOLV_WRAPPER_DEBUGLEVEL\fR
+.RS 4
+If you need to see what is going on in resolv_wrapper itself or try to find a bug, you can enable logging support in resolv_wrapper if you built it with debug symbols\&.
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+0 = ERROR
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+1 = WARNING
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+2 = DEBUG
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+3 = TRACE
+.RE
+.RE
+.PP
+\fBRESOLV_WRAPPER_DISABLE_DEEPBIND\fR
+.RS 4
+This allows you to disable deep binding in resolv_wrapper\&. This is useful for running valgrind tools or sanitizers like (address, undefined, thread)\&.
+.RE
+.SH "EXAMPLE"
+.sp
+The following command would trick \fIkinit(1)\fR into using DNS servers from "\&./resolv\&.conf" for Kerberos service resolution:
+.sp
+.if n \{\
+.RS 4
+.\}
+.nf
+$ LD_PRELOAD=libresolv_wrapper\&.so RESOLV_WRAPPER_CONF="\&./resolv\&.conf" kinit user@EXAMPLE\&.COM
+.fi
+.if n \{\
+.RE
+.\}
+.SH "AUTHOR"
+.PP
+\fBThe Samba Team\fR
+.RS 4
+Author.
+.RE
